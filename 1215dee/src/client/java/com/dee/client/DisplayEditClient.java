@@ -7,6 +7,10 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.decoration.DisplayEntity;
+import net.minecraft.entity.decoration.DisplayEntity.BlockDisplayEntity;
+import net.minecraft.entity.decoration.DisplayEntity.ItemDisplayEntity;
 import net.minecraft.entity.decoration.DisplayEntity.TextDisplayEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.nbt.AbstractNbtNumber;
@@ -14,10 +18,10 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.OrderedText;
 import net.minecraft.text.Text;
 import net.minecraft.text.TextCodecs;
-import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
@@ -56,17 +60,19 @@ public class DisplayEditClient implements ClientModInitializer {
     public static void beginPlacement(MinecraftClient client, Draft draft) {
         pendingPlacement = draft;
         client.setScreen(null);
-        Text key = OPEN_EDITOR.getBoundKeyLocalizedText().copy().formatted(Formatting.YELLOW);
+        Text key = OPEN_EDITOR.getBoundKeyLocalizedText().copy().styled(style -> style.withColor(0xFFFF55));
         chat(client, Text.translatable("dee.chat.place_hint", key));
     }
 
     @Override
     public void onInitializeClient() {
+        // 1.21.5 의 키 카테고리는 번역 키 문자열이다. (lang 파일의 key.category.dee.main)
+        // 1.21.9 부터 KeyBinding.Category 객체로 바뀐다.
         OPEN_EDITOR = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.dee.open_editor",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_G,
-                "category.dee"
+                "key.category." + DisplayEditMod.MOD_ID + ".main"
         ));
 
         // 빈손으로 허공을 우클릭하면 UseItemCallback 이 호출되지 않고, 디스플레이 엔티티는
@@ -91,7 +97,7 @@ public class DisplayEditClient implements ClientModInitializer {
 
         boolean creative = client.currentScreen == null && player.isCreative();
         boolean ready = creative && player.isSneaking();
-        TextDisplayEntity target = ready ? pick(client, player) : null;
+        DisplayEntity target = ready ? pick(client, player) : null;
 
         // Shift + 우클릭
         if (target != null) {
@@ -112,13 +118,13 @@ public class DisplayEditClient implements ClientModInitializer {
                 chat(client, Text.translatable("dee.chat.creative_only"));
                 continue;
             }
-            TextDisplayEntity t = target != null ? target : pick(client, player);
+            DisplayEntity t = target != null ? target : pick(client, player);
             if (t != null) {
                 openEditor(client, t);
                 return;
             }
             Vec3d p = player.getPos();
-            client.setScreen(new TextDisplayScreen(Draft.forNew(p.x, p.y, p.z)));
+            client.setScreen(new DisplayEditScreen(Draft.forNew(p.x, p.y, p.z)));
             return;
         }
     }
@@ -133,7 +139,7 @@ public class DisplayEditClient implements ClientModInitializer {
 
         if (client.currentScreen instanceof GameMenuScreen) {
             pendingPlacement = null;
-            client.setScreen(new TextDisplayScreen(draft));
+            client.setScreen(new DisplayEditScreen(draft));
             chat(client, Text.translatable("dee.chat.place_cancel"));
             return;
         }
@@ -146,18 +152,41 @@ public class DisplayEditClient implements ClientModInitializer {
             Vec3d p = player.getPos();
             draft.setPos(p.x, p.y, p.z);
             pendingPlacement = null;
-            client.setScreen(new TextDisplayScreen(draft));
+            client.setScreen(new DisplayEditScreen(draft));
             chat(client, Text.translatable("dee.chat.place_done",
                     String.format(Locale.ROOT, "%.2f", p.x), String.format(Locale.ROOT, "%.2f", p.y), String.format(Locale.ROOT, "%.2f", p.z)));
         }
     }
 
-    /** 서버 없이 클라이언트 엔티티의 현재 NBT 를 전부 읽어 Draft 로 만들고 화면을 연다. */
-    private void openEditor(MinecraftClient client, TextDisplayEntity target) {
-        NbtCompound nbt = new NbtCompound();
-        target.writeNbt(nbt);
-        client.setScreen(new TextDisplayScreen(new Draft(target.getUuidAsString(), nbt)));
-        // if (DEBUG) chat(client, Text.translatable("dee.chat.opened", target.getUuidAsString()));
+    /** (text/block/item 공통) 서버 없이 클라이언트 엔티티의 현재 NBT 를 전부 읽어 Draft 로 만들고 화면을 연다. */
+    private void openEditor(MinecraftClient client, DisplayEntity target) {
+        NbtCompound nbt = EntityNbt.save(target);
+        mergeServerTags(client, target, nbt);
+        Draft.Type type = target instanceof BlockDisplayEntity ? Draft.Type.BLOCK
+                : target instanceof ItemDisplayEntity ? Draft.Type.ITEM : Draft.Type.TEXT;
+        client.setScreen(new DisplayEditScreen(new Draft(target.getUuidAsString(), nbt, type)));
+//        if (DEBUG) chat(client, Text.translatable("dee.chat.opened", target.getUuidAsString()));
+    }
+
+    /**
+     * 스코어보드 태그(Tags)는 서버에만 있고 클라이언트 엔티티로 동기화되지 않는다.
+     * 싱글플레이(통합 서버)에서는 서버 쪽 같은 엔티티에서 읽어 와서 nbt 에 넣는다.
+     * 멀티플레이에서는 읽을 수 없으므로 그대로 둔다. (적용은 /tag add|remove 라서 기존 태그는 지워지지 않는다)
+     */
+    private static void mergeServerTags(MinecraftClient client, DisplayEntity target, NbtCompound nbt) {
+        var server = client.getServer();
+        if (server == null) return;
+        try {
+            for (ServerWorld level : server.getWorlds()) {
+                Entity serverEntity = level.getEntity(target.getUuid());
+                if (serverEntity == null) continue;
+                NbtElement tags = EntityNbt.save(serverEntity).get("Tags");
+                if (tags != null) nbt.put("Tags", tags);
+                return;
+            }
+        } catch (RuntimeException ignored) {
+            // 서버 스레드와 겹쳐 읽다 실패해도 편집은 계속할 수 있다
+        }
     }
 
     private static Text prefixed(Text message) {
@@ -174,9 +203,9 @@ public class DisplayEditClient implements ClientModInitializer {
 
     /**
      * 디스플레이 엔티티는 히트박스가 없어 일반 크로스헤어 타겟팅이 안 된다.
-     * 그래서 각 text_display 의 화면상 텍스트 영역을 계산해서, 시선이 그 영역에 가장 가깝게 지나가는 것을 고른다.
+     * 그래서 각 text_display / block_display / item_display 의 화면상 영역을 계산해서, 시선이 그 영역에 가장 가깝게 지나가는 것을 고른다.
      */
-    private TextDisplayEntity pick(MinecraftClient client, PlayerEntity player) {
+    private DisplayEntity pick(MinecraftClient client, PlayerEntity player) {
         Vec3d eye = player.getEyePos();
         Vec3d dir = player.getRotationVec(1.0f);
 
@@ -188,9 +217,10 @@ public class DisplayEditClient implements ClientModInitializer {
         Box area = player.getBoundingBox().expand(REACH + 4.0);
         long now = client.world.getTime();
 
-        TextDisplayEntity best = null;
+        DisplayEntity best = null;
         double bestScore = Double.MAX_VALUE;
-        for (TextDisplayEntity e : client.world.getEntitiesByClass(TextDisplayEntity.class, area, x -> true)) {
+        for (DisplayEntity e : client.world.getEntitiesByClass(DisplayEntity.class, area,
+                x -> x instanceof TextDisplayEntity || x instanceof BlockDisplayEntity || x instanceof ItemDisplayEntity)) {
             Visual v = visualOf(client, e, now);
 
             Vec3d rel = v.center().subtract(eye);
@@ -209,41 +239,58 @@ public class DisplayEditClient implements ClientModInitializer {
     }
 
     /**
-     * 텍스트 영역 계산. text_display 는 엔티티 위치에서 위로 자라고(바닥이 위치),
-     * 글자 1픽셀 = 0.025 블록 × transformation.scale 이다. (회전은 무시한 근사)
+     * 선택 영역 계산. (회전은 무시한 근사)
+     * - text_display: 엔티티 위치에서 위로 자라고(바닥이 위치), 글자 1픽셀 = 0.025 블록 × transformation.scale
+     * - block_display: 엔티티 위치(모서리)에서 +x/+y/+z 방향으로 scale 만큼 자란다
      */
-    private Visual visualOf(MinecraftClient client, TextDisplayEntity e, long now) {
+    private Visual visualOf(MinecraftClient client, DisplayEntity e, long now) {
         Visual cached = visualCache.get(e.getId());
         if (cached != null && now - cached.time() < CACHE_TICKS) return cached;
         if (visualCache.size() > 512) visualCache.clear();
 
-        NbtCompound nbt = new NbtCompound();
-        e.writeNbt(nbt);
-
-        NbtElement textElement = nbt.get("text");
-        Text text = textElement == null
-                ? Text.empty()
-                : TextCodecs.CODEC.parse(NbtOps.INSTANCE, textElement).result().orElse(Text.empty());
-
-        List<OrderedText> lines = client.textRenderer.wrapLines(text, Math.max(1, nbt.getInt("line_width", 200)));
-        int widthPx = 0;
-        for (OrderedText line : lines) widthPx = Math.max(widthPx, client.textRenderer.getWidth(line));
-        int heightPx = Math.max(1, lines.size()) * (client.textRenderer.fontHeight + 1);
-
+        NbtCompound nbt = EntityNbt.save(e);
         NbtCompound transformation = nbt.getCompoundOrEmpty("transformation");
         NbtList scale = transformation.getListOrEmpty("scale");
         NbtList translation = transformation.getListOrEmpty("translation");
-        double sx = Math.abs(component(scale, 0, 1f));
-        double sy = Math.abs(component(scale, 1, 1f));
+        double tx = component(translation, 0, 0f);
+        double ty = component(translation, 1, 0f);
+        double tz = component(translation, 2, 0f);
 
-        double w = widthPx * 0.025 * sx;
-        double h = heightPx * 0.025 * sy;
+        Visual visual;
+        if (e instanceof BlockDisplayEntity) {
+            double sx = component(scale, 0, 1f);
+            double sy = component(scale, 1, 1f);
+            double sz = component(scale, 2, 1f);
+            // 음수 scale 도 부호 그대로 더하면 중심이 맞는다
+            Vec3d center = e.getPos().add(tx + sx / 2, ty + sy / 2, tz + sz / 2);
+            visual = new Visual(center,
+                    Math.max(Math.abs(sx), Math.abs(sz)) / 2 + MARGIN, Math.abs(sy) / 2 + MARGIN, now);
+        } else if (e instanceof ItemDisplayEntity) {
+            // item_display: 아이템 모델이 엔티티 위치를 중심으로 scale 만큼 퍼진다
+            double sx = Math.abs(component(scale, 0, 1f));
+            double sy = Math.abs(component(scale, 1, 1f));
+            double sz = Math.abs(component(scale, 2, 1f));
+            Vec3d center = e.getPos().add(tx, ty, tz);
+            visual = new Visual(center, Math.max(sx, sz) / 2 + MARGIN, sy / 2 + MARGIN, now);
+        } else {
+            NbtElement textElement = nbt.get("text");
+            Text text = textElement == null
+                    ? Text.empty()
+                    : TextCodecs.CODEC.parse(NbtOps.INSTANCE, textElement).result().orElse(Text.empty());
 
-        Vec3d center = e.getPos()
-                .add(component(translation, 0, 0f), component(translation, 1, 0f), component(translation, 2, 0f))
-                .add(0, h / 2, 0);
+            List<OrderedText> lines = client.textRenderer.wrapLines(text, Math.max(1, nbt.getInt("line_width", 200)));
+            int widthPx = 0;
+            for (OrderedText line : lines) widthPx = Math.max(widthPx, client.textRenderer.getWidth(line));
+            int heightPx = Math.max(1, lines.size()) * (client.textRenderer.fontHeight + 1);
 
-        Visual visual = new Visual(center, w / 2 + MARGIN, h / 2 + MARGIN, now);
+            double sx = Math.abs(component(scale, 0, 1f));
+            double sy = Math.abs(component(scale, 1, 1f));
+            double w = widthPx * 0.025 * sx;
+            double h = heightPx * 0.025 * sy;
+
+            Vec3d center = e.getPos().add(tx, ty, tz).add(0, h / 2, 0);
+            visual = new Visual(center, w / 2 + MARGIN, h / 2 + MARGIN, now);
+        }
         visualCache.put(e.getId(), visual);
         return visual;
     }

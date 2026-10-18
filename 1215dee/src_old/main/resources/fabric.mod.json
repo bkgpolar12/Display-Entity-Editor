@@ -1,0 +1,26 @@
+{
+	"schemaVersion": 1,
+	"id": "dee",
+	"version": "0.0.3b-1.21.5",
+	"name": "Display Entity Editor",
+	"icon": "assets/displayentityeditor/icon.png",
+	"authors": [
+		"BKGpolar"
+	],
+	"contact": {
+		"homepage": "https://modrinth.com/mod/display-entity-editor",
+		"sources": ""
+	},
+	"license": "MIT",
+	"description": "Edit display entities with a GUI instead of commands.",
+	"environment": "*",
+	"entrypoints": {
+		"main": ["com.dee.client.DisplayEditMod"],
+		"client": ["com.dee.client.DisplayEditClient"]
+	},
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "~1.21.5",
+		"fabric-api": "*"
+	}
+}

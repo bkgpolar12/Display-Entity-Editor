@@ -19,6 +19,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.RegistryOps;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
@@ -396,7 +397,7 @@ public class DisplayEditScreen extends Screen {
             // 고급: text NBT 를 SNBT 그대로 편집한다. 예) {translate:"my.key"}, {text:"a",color:"red"}
             textField.setMaxLength(4096);
             Tag element = draft.get("text");
-            textField.setValue(element == null ? "" : element.toString());
+            textField.setValue(element == null ? "" : toListForm(element).toString());
             textField.setHint(Component.literal("{translate:\"key\"}"));
             textField.setResponder(this::onAdvancedTextEdit);
         } else {
@@ -1127,6 +1128,24 @@ public class DisplayEditScreen extends Screen {
     // ------------------------------------------------------------------
     // 텍스트 변환
     // ------------------------------------------------------------------
+
+    /**
+     * 게임은 [a,b,c] 를 {a..., extra:[b,c]} 로 합쳐서 저장하므로,
+     * 고급 입력칸에 보여 줄 때만 원래의 리스트 형태로 되돌린다. (의미는 동일)
+     */
+    private static Tag toListForm(Tag element) {
+        if (element instanceof CompoundTag compound
+                && compound.get("extra") instanceof ListTag extra
+                && !extra.isEmpty()) {
+            CompoundTag head = compound.copy();
+            head.remove("extra");
+            ListTag out = new ListTag();
+            out.add(head);
+            for (int i = 0; i < extra.size(); i++) out.add(extra.get(i));
+            return out;
+        }
+        return element;
+    }
 
     private Component currentText() {
         Tag element = draft.get("text");

@@ -12,13 +12,24 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 메인 화면에서 다루지 않는 나머지 NBT 키를 SNBT 문자열로 수정하는 화면.
+ * 메인 화면에서 다루지 않는 나머지 NBT 키(디스플레이 종류별)를 SNBT 문자열로 수정하는 화면.
  * 빈 칸 = 값 제거, 빨간 글씨 = 문법 오류(저장 안 됨). 마우스 휠로 스크롤.
  */
 public class AdvancedNbtScreen extends Screen {
     /** 메인 화면에서 다루지 않는 키들. DisplayEditMod.ALLOWED 와 맞춰서 유지하세요. */
-    private static final List<String> KEYS = List.of(
+    private static final List<String> TEXT_KEYS = List.of(
             "text", "transformation", "brightness", "view_range",
+            "shadow_radius", "shadow_strength", "width", "height",
+            "interpolation_duration", "start_interpolation", "teleport_duration"
+    );
+    private static final List<String> BLOCK_KEYS = List.of(
+            "block_state", "transformation", "brightness", "view_range",
+            "shadow_radius", "shadow_strength", "width", "height",
+            "interpolation_duration", "start_interpolation", "teleport_duration"
+    );
+
+    private static final List<String> ITEM_KEYS = List.of(
+            "item", "transformation", "brightness", "view_range",
             "shadow_radius", "shadow_strength", "width", "height",
             "interpolation_duration", "start_interpolation", "teleport_duration"
     );
@@ -31,6 +42,8 @@ public class AdvancedNbtScreen extends Screen {
     private static final int COLOR_ERR = 0xFFFF5555;
 
     private final Draft draft;
+    /** 디스플레이 종류에 맞는 키 목록 */
+    private final List<String> keys;
     private final List<TextFieldWidget> fields = new ArrayList<>();
 
     private int left;
@@ -42,6 +55,11 @@ public class AdvancedNbtScreen extends Screen {
     public AdvancedNbtScreen(Draft draft) {
         super(Text.translatable("dee.advanced.title"));
         this.draft = draft;
+        this.keys = switch (draft.type()) {
+            case BLOCK -> BLOCK_KEYS;
+            case ITEM -> ITEM_KEYS;
+            default -> TEXT_KEYS;
+        };
     }
 
     @Override
@@ -54,9 +72,9 @@ public class AdvancedNbtScreen extends Screen {
         int bottomY = height - 6 - ROW_H;
         int listBottom = bottomY - 6;
         visibleRows = Math.max(1, (listBottom - listTop + GAP) / PITCH);
-        firstRow = Math.min(firstRow, Math.max(0, KEYS.size() - visibleRows));
+        firstRow = Math.min(firstRow, Math.max(0, keys.size() - visibleRows));
 
-        for (String key : KEYS) {
+        for (String key : keys) {
             TextFieldWidget f = addDrawableChild(new TextFieldWidget(
                     textRenderer, left + LABEL_W, 0, contentW - LABEL_W, ROW_H, Text.empty()));
             f.setMaxLength(4096);
@@ -101,7 +119,7 @@ public class AdvancedNbtScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        int max = Math.max(0, KEYS.size() - visibleRows);
+        int max = Math.max(0, keys.size() - visibleRows);
         int next = Math.max(0, Math.min(max, firstRow - (int) Math.signum(verticalAmount)));
         if (next != firstRow) {
             firstRow = next;
@@ -113,7 +131,7 @@ public class AdvancedNbtScreen extends Screen {
     /** 닫으면 메인 화면으로 돌아간다. (새로 만들어야 입력칸에 바뀐 값이 반영된다) */
     @Override
     public void close() {
-        client.setScreen(new TextDisplayScreen(draft));
+        client.setScreen(new DisplayEditScreen(draft));
     }
 
     @Override
@@ -129,9 +147,9 @@ public class AdvancedNbtScreen extends Screen {
                 Text.translatable("dee.advanced.hint"),
                 width / 2, 17, 0xFFA0A0A0);
 
-        for (int i = firstRow; i < Math.min(KEYS.size(), firstRow + visibleRows); i++) {
+        for (int i = firstRow; i < Math.min(keys.size(), firstRow + visibleRows); i++) {
             int y = listTop + (i - firstRow) * PITCH;
-            context.drawText(textRenderer, KEYS.get(i), left, y + 6, 0xFFB0B0B0, false);
+            context.drawText(textRenderer, keys.get(i), left, y + 6, 0xFFB0B0B0, false);
         }
     }
 }

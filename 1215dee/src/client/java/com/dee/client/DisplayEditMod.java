@@ -23,13 +23,17 @@ public class DisplayEditMod implements ModInitializer {
     /** true 면 서버 쪽 처리 결과를 채팅으로 알려 준다. 문제 해결되면 false 로 */
     private static final boolean DEBUG = false;
 
-    /** 클라이언트가 수정을 요청할 수 있는 text_display NBT 키 화이트리스트 */
+    /** 클라이언트가 수정을 요청할 수 있는 text_display / block_display NBT 키 화이트리스트 */
     private static final Set<String> ALLOWED = Set.of(
             // text_display 전용
             "text", "line_width", "background", "text_opacity",
             "alignment", "shadow", "see_through", "default_background",
+            // block_display 전용
+            "block_state",
+            // item_display 전용
+            "item", "item_display",
             // 공통 Display
-            "transformation", "billboard", "brightness", "view_range",
+            "Tags", "transformation", "billboard", "brightness", "view_range",
             "shadow_radius", "shadow_strength", "glow_color_override",
             "width", "height",
             "interpolation_duration", "start_interpolation", "teleport_duration"
@@ -47,10 +51,9 @@ public class DisplayEditMod implements ModInitializer {
                 Entity entity = resolve(player, payload.entityId());
                 if (entity == null) return;
 
-                NbtCompound nbt = new NbtCompound();
-                entity.writeNbt(nbt);
+                NbtCompound nbt = EntityNbt.save(entity);
                 ServerPlayNetworking.send(player, new OpenScreen(entity.getId(), nbt));
-                debug(player, "편집 데이터 전송 (id " + entity.getId() + ")");
+                //debug(player, "편집 데이터 전송 (id " + entity.getId() + ")");
             } catch (Throwable t) {
                 fail(player, "편집 요청 처리 중 오류", t);
             }
@@ -62,8 +65,7 @@ public class DisplayEditMod implements ModInitializer {
                 Entity entity = resolve(player, payload.entityId());
                 if (entity == null) return;
 
-                NbtCompound merged = new NbtCompound();
-                entity.writeNbt(merged);
+                NbtCompound merged = EntityNbt.save(entity);
 
                 NbtCompound patch = payload.patch();
                 for (String key : patch.getKeys()) {
@@ -76,21 +78,23 @@ public class DisplayEditMod implements ModInitializer {
                 }
 
                 // /data merge entity 와 같은 방식. 트래킹 데이터가 갱신되어 클라이언트로 자동 동기화된다.
-                entity.readNbt(merged);
-                debug(player, "적용 완료 (id " + entity.getId() + ")");
+                EntityNbt.load(entity, merged);
+                //debug(player, "적용 완료 (id " + entity.getId() + ")");
             } catch (Throwable t) {
                 fail(player, "적용 중 오류", t);
             }
         });
     }
 
-    /** 권한/거리/타입 검증. 통과하면 text_display 엔티티, 아니면 사유를 알리고 null */
+    /** 권한/거리/타입 검증. 통과하면 display 엔티티, 아니면 사유를 알리고 null */
     private static Entity resolve(ServerPlayerEntity player, int entityId) {
         if (!player.isCreative()) return reject(player, "크리에이티브 모드가 아닙니다");
-        // 서버용으로 쓸 때는 OP 권한 검사를 추가하세요: player.hasPermissionLevel(2)
+        // 서버용으로 쓸 때는 OP 권한 검사를 추가하세요. (1.21.5: player.hasPermissionLevel(2))
         Entity entity = player.getWorld().getEntityById(entityId);
         if (entity == null) return reject(player, "엔티티를 찾지 못했습니다 (id " + entityId + ")");
-        if (!(entity instanceof DisplayEntity.TextDisplayEntity)) return reject(player, "text_display 가 아닙니다");
+        if (!(entity instanceof DisplayEntity.TextDisplayEntity || entity instanceof DisplayEntity.BlockDisplayEntity
+                || entity instanceof DisplayEntity.ItemDisplayEntity))
+            return reject(player, "text_display / block_display / item_display 가 아닙니다");
         if (player.squaredDistanceTo(entity) > 16 * 16) return reject(player, "너무 멉니다 (16칸 초과)");
         return entity;
     }
