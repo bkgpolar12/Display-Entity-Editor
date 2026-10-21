@@ -90,5 +90,13 @@
   "dee.item_context.fixed": "Fixed",
   "dee.item_context.on_shelf": "On shelf",
   "dee.option.auto_align": "Align",
-  "dee.tooltip.auto_align": "Align the position of the block display to the block grid (integer coordinates)."
+  "dee.tooltip.auto_align": "Align the position of the block display to the block grid (integer coordinates).",
+  "dee.button.pick": "Pick",
+  "dee.tooltip.pick_block": "Choose from a list of all blocks. (Search by name or ID)",
+  "dee.tooltip.pick_item": "Choose from a list of all items. (Search by name or ID)",
+  "dee.picker.title.block": "Pick a Block",
+  "dee.picker.title.item": "Pick an Item",
+  "dee.picker.search_hint": "Search by name or ID…",
+  "dee.picker.count": "%s entries",
+  "dee.picker.empty": "No results found"
 }

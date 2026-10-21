@@ -90,5 +90,13 @@
   "dee.item_context.fixed": "고정",
   "dee.item_context.on_shelf": "선반",
   "dee.option.auto_align": "자동 정렬",
-  "dee.tooltip.auto_align": "블록 디스플레이의 위치를 블록 칸(정수 좌표)에 맞춥니다."
+  "dee.tooltip.auto_align": "블록 디스플레이의 위치를 블록 칸(정수 좌표)에 맞춥니다.",
+  "dee.button.pick": "고르기",
+  "dee.tooltip.pick_block": "모든 블록 목록에서 고릅니다. (이름이나 ID로 검색 가능)",
+  "dee.tooltip.pick_item": "모든 아이템 목록에서 고릅니다. (이름이나 ID로 검색 가능)",
+  "dee.picker.title.block": "블록 고르기",
+  "dee.picker.title.item": "아이템 고르기",
+  "dee.picker.search_hint": "이름 또는 ID로 검색…",
+  "dee.picker.count": "%s개",
+  "dee.picker.empty": "검색 결과가 없습니다"
 }

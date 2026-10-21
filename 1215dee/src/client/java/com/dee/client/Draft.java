@@ -229,7 +229,11 @@ public final class Draft {
         advancedText = false;
 
         switch (newType) {
-            case BLOCK -> working.put("block_state", NbtString.of("minecraft:stone"));
+            case BLOCK -> {
+                NbtCompound state = new NbtCompound();
+                state.putString("Name", "minecraft:stone");
+                working.put("block_state", state);
+            }
             case ITEM -> {
                 NbtCompound item = new NbtCompound();
                 item.putString("id", "minecraft:stone");

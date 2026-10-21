@@ -112,6 +112,8 @@ public class DisplayEditScreen extends Screen {
     private int scaleLabelW;
     private int rotLabelW;
     private int contentW;
+    /** [고르기] 버튼 너비. 글자 너비에 맞춰 init() 에서 계산한다. */
+    private int pickW;
 
     private EditBox textField;
     private EditBox blockField;
@@ -163,6 +165,7 @@ public class DisplayEditScreen extends Screen {
                     "dee.label.background", "dee.label.glow");
         };
         labelW = Math.max(40, widestLabel + 6);
+        pickW = Math.max(ADV_W, font.width(Component.translatable("dee.button.pick")) + 12);
         rotLabelW = Math.max(20, widest("dee.label.yaw", "dee.label.pitch") + 6);
         scaleLabelW = Math.max(36, font.width(Component.translatable("dee.label.scale", "X")) + 4);
 
@@ -433,7 +436,8 @@ public class DisplayEditScreen extends Screen {
     private int addItemRow(int cy) {
         addLabel(Component.translatable("dee.label.item"), left, cy);
         itemField = addScroll(new EditBox(font, left + labelW, 0,
-                contentW - labelW, ROW_H, Component.empty()), cy);
+                contentW - labelW - GAP - pickW, ROW_H, Component.empty()), cy);
+        addScroll(pickButton("dee.tooltip.pick_item", this::openItemPicker), cy);
         itemField.setMaxLength(256);
         itemField.setHint(Component.literal("minecraft:diamond_sword"));
         itemField.setTooltip(Tooltip.create(Component.translatable("dee.tooltip.item")));
@@ -468,6 +472,42 @@ public class DisplayEditScreen extends Screen {
             itemField.setCursorPosition(itemCursor);
         }
         return cy;
+    }
+
+    /** 입력칸 오른쪽의 [고르기] 버튼. 누르면 전체 블록/아이템 목록 화면이 열린다. */
+    private Button pickButton(String tooltipKey, Runnable action) {
+        return Button.builder(Component.translatable("dee.button.pick"), b -> action.run())
+                .bounds(left + contentW - pickW, 0, pickW, ROW_H)
+                .tooltip(Tooltip.create(Component.translatable(tooltipKey)))
+                .build();
+    }
+
+    private void openBlockPicker() {
+        minecraft.gui.setScreen(new ItemPickerScreen(this, ItemPickerScreen.Mode.BLOCK,
+                parseBlockId(blockField.getValue()), this::pickBlock));
+    }
+
+    private void openItemPicker() {
+        minecraft.gui.setScreen(new ItemPickerScreen(this, ItemPickerScreen.Mode.ITEM,
+                parseItemId(itemField.getValue()), id -> draft.setItemId(id.toString())));
+    }
+
+    /**
+     * 목록에서 고른 블록을 Draft 에 저장한다. 다른 블록이 되므로 속성은 기본값으로 초기화된다.
+     * 목록 화면이 닫히면 이 화면의 init() 이 다시 불려 입력칸과 미리보기가 Draft 에서 채워진다.
+     */
+    private void pickBlock(Identifier id) {
+        Block block = BuiltInRegistries.BLOCK.getValue(id);
+        Tag tag = BlockState.CODEC.encodeStart(NbtOps.INSTANCE, block.defaultBlockState()).result().orElse(null);
+        if (tag != null) draft.set("block_state", tag);
+    }
+
+    /** "oak_stairs" / "minecraft:oak_stairs" -> Identifier. 없는 블록이면 null. */
+    private static Identifier parseBlockId(String raw) {
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return null;
+        Identifier id = Identifier.tryParse(trimmed.contains(":") ? trimmed : "minecraft:" + trimmed);
+        return id != null && BuiltInRegistries.BLOCK.containsKey(id) ? id : null;
     }
 
     /** 아이템 ID 칸 입력 처리. 없는 아이템이면 빨간색이고 저장되지 않는다. */
@@ -537,7 +577,8 @@ public class DisplayEditScreen extends Screen {
 
         addLabel(Component.translatable("dee.label.block"), left, cy);
         blockField = addScroll(new EditBox(font, left + labelW, 0,
-                contentW - labelW, ROW_H, Component.empty()), cy);
+                contentW - labelW - GAP - pickW, ROW_H, Component.empty()), cy);
+        addScroll(pickButton("dee.tooltip.pick_block", this::openBlockPicker), cy);
         blockField.setMaxLength(256);
         blockField.setHint(Component.literal("minecraft:oak_stairs"));
         blockField.setTooltip(Tooltip.create(Component.translatable("dee.tooltip.block")));
