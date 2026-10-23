@@ -98,5 +98,16 @@
   "dee.picker.title.item": "아이템 고르기",
   "dee.picker.search_hint": "이름 또는 ID로 검색…",
   "dee.picker.count": "%s개",
-  "dee.picker.empty": "검색 결과가 없습니다"
+  "dee.picker.empty": "검색 결과가 없습니다",
+  "dee.button.editor_mode": "에디터 모드",
+  "dee.tooltip.editor_mode": "엔티티를 지금 생성하고, 월드에서 화살표로 위치·회전·크기를 조절합니다. (ESC로 종료)",
+  "dee.gizmo.title": "에디터 모드 - %s",
+  "dee.gizmo.mode.move": "이동",
+  "dee.gizmo.mode.rotate": "회전",
+  "dee.gizmo.mode.scale": "크기",
+  "dee.gizmo.help": "%1$s 이동  %2$s 회전  %3$s 크기 | %4$s 드래그: 조작 | 드래그 중 %5$s: 취소 | %6$s: 스냅 | %5$s / %7$s: 편집 UI | 바라보는 게 없을 때 %7$s: 새로 만들기 | ESC: 종료",
+  "dee.gizmo.hover": "%1$s: 선택 / %3$s 또는 %2$s: 편집 UI",
+  "dee.chat.gizmo_enter": "에디터 모드 시작 (ESC로 종료)",
+  "dee.chat.gizmo_exit": "에디터 모드 종료",
+  "dee.chat.gizmo_lost": "편집하던 엔티티를 찾지 못해 에디터 모드를 종료했습니다"
 }

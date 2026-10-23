@@ -98,5 +98,16 @@
   "dee.picker.title.item": "Pick an Item",
   "dee.picker.search_hint": "Search by name or ID…",
   "dee.picker.count": "%s entries",
-  "dee.picker.empty": "No results found"
+  "dee.picker.empty": "No results found",
+  "dee.button.editor_mode": "Editor mode",
+  "dee.tooltip.editor_mode": "Creates the entity now and lets you move, rotate and scale it in the world with gizmo handles. (ESC to exit)",
+  "dee.gizmo.title": "Editor mode - %s",
+  "dee.gizmo.mode.move": "Move",
+  "dee.gizmo.mode.rotate": "Rotate",
+  "dee.gizmo.mode.scale": "Scale",
+  "dee.gizmo.help": "%1$s Move  %2$s Rotate  %3$s Scale | %4$s drag: edit | %5$s while dragging: cancel | %6$s: snap | %5$s / %7$s: edit UI | %7$s with nothing in view: new display | ESC: exit",
+  "dee.gizmo.hover": "%1$s: select / %3$s or %2$s: edit UI",
+  "dee.chat.gizmo_enter": "Editor mode on (ESC to exit)",
+  "dee.chat.gizmo_exit": "Editor mode off",
+  "dee.chat.gizmo_lost": "Could not find the entity being edited; editor mode ended"
 }

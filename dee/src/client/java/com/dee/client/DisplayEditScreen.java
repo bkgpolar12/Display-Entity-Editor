@@ -330,19 +330,27 @@ public class DisplayEditScreen extends Screen {
         addRenderableWidget(Button.builder(
                         Component.translatable(draft.isCreating() ? "dee.button.create" : "dee.button.apply"), b -> apply())
                 .bounds(boxL + (btnW + GAP), bottomY, btnW, ROW_H).build());
-        Button deleteButton = addRenderableWidget(Button.builder(deleteLabel(), b -> {
-                    if (!deleteArmed) {
-                        // 첫 클릭: 확인 상태로 바꾼다. 한 번 더 눌러야 삭제된다.
-                        deleteArmed = true;
-                        b.setMessage(deleteLabel());
-                    } else {
-                        deleteEntity();
-                    }
-                })
-                .bounds(boxL + 2 * (btnW + GAP), bottomY, btnW, ROW_H)
-                .tooltip(Tooltip.create(Component.translatable("dee.tooltip.delete")))
-                .build());
-        deleteButton.active = !draft.isCreating(); // 아직 없는 엔티티는 지울 수 없다
+        if (draft.isCreating()) {
+            // 아직 없는 엔티티는 지울 수 없으므로, 그 자리에 [에디터 모드] 버튼을 둔다
+            addRenderableWidget(Button.builder(Component.translatable("dee.button.editor_mode"),
+                            b -> DisplayEditClient.beginEditorFromDraft(minecraft, draft))
+                    .bounds(boxL + 2 * (btnW + GAP), bottomY, btnW, ROW_H)
+                    .tooltip(Tooltip.create(Component.translatable("dee.tooltip.editor_mode")))
+                    .build());
+        } else {
+            addRenderableWidget(Button.builder(deleteLabel(), b -> {
+                        if (!deleteArmed) {
+                            // 첫 클릭: 확인 상태로 바꾼다. 한 번 더 눌러야 삭제된다.
+                            deleteArmed = true;
+                            b.setMessage(deleteLabel());
+                        } else {
+                            deleteEntity();
+                        }
+                    })
+                    .bounds(boxL + 2 * (btnW + GAP), bottomY, btnW, ROW_H)
+                    .tooltip(Tooltip.create(Component.translatable("dee.tooltip.delete")))
+                    .build());
+        }
         addRenderableWidget(Button.builder(Component.translatable("dee.button.cancel"), b -> onClose())
                 .bounds(boxL + 3 * (btnW + GAP), bottomY, btnW, ROW_H).build());
     }

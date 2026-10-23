@@ -4,6 +4,13 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.PauseScreen;
@@ -17,12 +24,14 @@ import net.minecraft.network.chat.ComponentSerialization;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Display.BlockDisplay;
 import net.minecraft.world.entity.Display.ItemDisplay;
 import net.minecraft.world.entity.Display.TextDisplay;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -31,6 +40,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 /** 클라이언트 전용 진입점. 서버에 모드가 없어도 동작한다. */
 public class DisplayEditClient implements ClientModInitializer {
@@ -64,6 +74,26 @@ public class DisplayEditClient implements ClientModInitializer {
         chat(client, Component.translatable("dee.chat.place_hint", key));
     }
 
+    /**
+     * 새로 만들기 화면의 [에디터 모드] 버튼이 호출한다.
+     * 초안으로 엔티티를 "지금" summon 하고(UUID 를 미리 정해 둔다), 그 엔티티로 에디터 모드를 시작한다.
+     * 이후에는 평범한 기존 엔티티와 같다. (UI 로 고치거나 삭제 가능)
+     */
+    public static void beginEditorFromDraft(Minecraft client, Draft draft) {
+        var handler = client.getConnection();
+        if (handler == null) return;
+        UUID id = UUID.randomUUID();
+        handler.sendCommand(draft.buildSummonCommand(id));
+        client.gui.setScreen(null);
+        GizmoEditor.beginPending(id);
+        chat(client, Component.translatable("dee.chat.gizmo_enter"));
+    }
+
+    /** 에디터 모드가 켜진 동안 블록/아이템/엔티티 상호작용을 막을지. (클라이언트 쪽에서만) */
+    private static boolean blocked(Level level) {
+        return level.isClientSide() && GizmoEditor.isActive();
+    }
+
     @Override
     public void onInitializeClient() {
         // 카테고리 번역 키: key.category.dee.main (lang 파일 참고)
@@ -82,6 +112,26 @@ public class DisplayEditClient implements ClientModInitializer {
         // 히트박스가 없어 UseEntityCallback 도 호출되지 않는다. 그래서 틱에서 우클릭 키를 직접 확인한다.
         // START_CLIENT_TICK 은 바닐라 입력 처리보다 먼저 실행되므로 여기서 키 입력을 소비하면 기본 동작이 막힌다.
         ClientTickEvents.START_CLIENT_TICK.register(this::onTick);
+
+        // 기즈모는 HUD 에 그린다. (월드 렌더 API 는 버전마다 크게 바뀌어서 HUD API 만 사용)
+        HudElementRegistry.attachElementBefore(
+                VanillaHudElements.CHAT,
+                Identifier.fromNamespaceAndPath(DisplayEditMod.MOD_ID, "gizmo"),
+                (graphics, deltaTracker) -> GizmoEditor.render(
+                        Minecraft.getInstance(), graphics, deltaTracker.getGameTimeDeltaPartialTick(false)));
+
+        // 에디터 모드에서는 모든 블록 상호작용 차단. (크리에이티브에서 좌클릭을 누르고 있으면 블록이 연속으로
+        // 부서지는데, 그것도 attack 콜백이 막는다.) 클릭 키 자체는 GizmoEditor.tick 이 소비한다.
+        AttackBlockCallback.EVENT.register((player, level, hand, pos, direction) ->
+                blocked(level) ? InteractionResult.FAIL : InteractionResult.PASS);
+        UseBlockCallback.EVENT.register((player, level, hand, hit) ->
+                blocked(level) ? InteractionResult.FAIL : InteractionResult.PASS);
+        UseItemCallback.EVENT.register((player, level, hand) ->
+                blocked(level) ? InteractionResult.FAIL : InteractionResult.PASS);
+        AttackEntityCallback.EVENT.register((player, level, hand, entity, hit) ->
+                blocked(level) ? InteractionResult.FAIL : InteractionResult.PASS);
+        UseEntityCallback.EVENT.register((player, level, hand, entity, hit) ->
+                blocked(level) ? InteractionResult.FAIL : InteractionResult.PASS);
     }
 
     private void onTick(Minecraft client) {
@@ -89,6 +139,7 @@ public class DisplayEditClient implements ClientModInitializer {
         if (player == null || client.level == null) {
             visualCache.clear();
             pendingPlacement = null;
+            GizmoEditor.exit();
             return;
         }
 
@@ -98,23 +149,48 @@ public class DisplayEditClient implements ClientModInitializer {
             return;
         }
 
+        // 에디터 모드: 입력은 전부 GizmoEditor 가 처리한다 (ESC 종료, 핸들 드래그, 우클릭 UI 등)
+        if (GizmoEditor.isActive()) {
+            boolean noScreen = client.gui.screen() == null;
+            Display hovered = noScreen ? pick(client, player) : null;
+            GizmoEditor.tick(client, player, hovered);
+
+            // 에디터 모드 중 G
+            //  - 바라보는 디스플레이가 있으면: 그 디스플레이의 편집 UI (선택해 둔 것은 상관없음)
+            //  - 없으면: 새로 만들기 UI
+            if (GizmoEditor.isActive() && noScreen && client.gui.screen() == null) {
+                if (OPEN_EDITOR.consumeClick()) {
+                    while (OPEN_EDITOR.consumeClick()) { /* 남은 눌림 소비 */ }
+                    if (hovered != null) {
+                        openEditorScreen(client, hovered);
+                    } else {
+                        Vec3 p = player.position();
+                        client.gui.setScreen(new DisplayEditScreen(Draft.forNew(p.x, p.y, p.z)));
+                    }
+                }
+            }
+            return;
+        }
+
         boolean creative = client.gui.screen() == null && player.isCreative();
         boolean ready = creative && player.isShiftKeyDown();
         Display target = ready ? pick(client, player) : null;
 
-        // Shift + 우클릭
+        // Shift + 우클릭: 에디터 모드를 거치지 않고 바로 편집 UI (기존 방식 유지)
         if (target != null) {
             if (client.options.keyUse.consumeClick()) {
                 // 같은 틱에 바닐라가 우클릭을 한 번 더 처리하지 않도록 눌림 상태 해제 (블록 설치 등 차단)
                 client.options.keyUse.setDown(false);
-                openEditor(client, target);
+                openEditorScreen(client, target);
                 return;
             }
         } else if (DEBUG && ready && client.options.keyUse.isDown() && player.tickCount % 20 == 0) {
             player.sendOverlayMessage(prefixed(Component.translatable("dee.chat.not_found")));
         }
 
-        // 키바인드 (웅크리지 않아도 됨): 바라보는 text_display 가 있으면 수정, 없으면 새로 만들기.
+        // 키바인드 (웅크리지 않아도 됨)
+        //  - 바라보는 디스플레이가 있으면: UI 없이 바로 에디터 모드
+        //  - 없으면: 새로 만들기 UI (거기서 [에디터 모드] 버튼으로 진입)
         // 눌림은 항상 소비한다.
         while (OPEN_EDITOR.consumeClick()) {
             if (!creative) {
@@ -123,7 +199,8 @@ public class DisplayEditClient implements ClientModInitializer {
             }
             Display t = target != null ? target : pick(client, player);
             if (t != null) {
-                openEditor(client, t);
+                GizmoEditor.begin(t);
+                chat(client, Component.translatable("dee.chat.gizmo_enter"));
                 return;
             }
             Vec3 p = player.position();
@@ -161,14 +238,13 @@ public class DisplayEditClient implements ClientModInitializer {
         }
     }
 
-    /** (text/block 공통) 서버 없이 클라이언트 엔티티의 현재 NBT 를 전부 읽어 Draft 로 만들고 화면을 연다. */
-    private void openEditor(Minecraft client, Display target) {
+    /** (공통) 서버 없이 클라이언트 엔티티의 현재 NBT 를 전부 읽어 Draft 로 만들고 편집 화면을 연다. */
+    static void openEditorScreen(Minecraft client, Display target) {
         CompoundTag nbt = EntityNbt.save(target);
         mergeServerTags(client, target, nbt);
         Draft.Type type = target instanceof BlockDisplay ? Draft.Type.BLOCK
                 : target instanceof ItemDisplay ? Draft.Type.ITEM : Draft.Type.TEXT;
         client.gui.setScreen(new DisplayEditScreen(new Draft(target.getStringUUID(), nbt, type)));
-//        if (DEBUG) chat(client, Component.translatable("dee.chat.opened", target.getStringUUID()));
     }
 
     /**
@@ -193,10 +269,10 @@ public class DisplayEditClient implements ClientModInitializer {
     }
 
     private static Component prefixed(Component message) {
-        return Component.literal("[DEE] ").append(message);
+        return message;
     }
 
-    private static void chat(Minecraft client, Component message) {
+    static void chat(Minecraft client, Component message) {
         if (client.player != null) client.player.sendSystemMessage(prefixed(message));
     }
 

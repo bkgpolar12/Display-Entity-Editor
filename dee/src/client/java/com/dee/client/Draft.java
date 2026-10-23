@@ -2,8 +2,10 @@ package com.dee.client;
 
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.FloatTag;
+import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NumericTag;
 import net.minecraft.nbt.StringTag;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -477,6 +480,14 @@ public final class Draft {
         list.add(FloatTag.valueOf(z));
         transformation.put("scale", list);
         working.put("transformation", transformation);
+    }
+
+    /** 새로 만들기 전용: 지정한 UUID 로 summon 한다. (에디터 모드 진입 시 엔티티를 먼저 만들어 두기 위함) */
+    public String buildSummonCommand(UUID id) {
+        CompoundTag summoned = working.copy();
+        summoned.put("Rotation", floats(rot[0], rot[1]));
+        summoned.put("UUID", new IntArrayTag(UUIDUtil.uuidToIntArray(id)));
+        return "summon " + type.entityId() + " " + posString() + " " + summoned;
     }
 
     // ---- 서버로 보낼 명령 ----
