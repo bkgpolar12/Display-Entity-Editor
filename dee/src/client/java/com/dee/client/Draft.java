@@ -273,7 +273,7 @@ public final class Draft {
     }
 
     public void setPosAxis(int axis, double value) {
-        pos[axis] = aligning() ? Math.floor(value) : value;
+        pos[axis] = aligning() ? alignedAxis(axis, value) : value;
     }
 
     // ---- 자동 정렬 (block_display 전용) ----
@@ -299,7 +299,39 @@ public final class Draft {
     }
 
     private void snapToBlock() {
-        for (int i = 0; i < 3; i++) pos[i] = Math.floor(pos[i]);
+        for (int i = 0; i < 3; i++) pos[i] = alignedAxis(i, pos[i]);
+    }
+
+    /**
+     * 눈에 보이는 블록의 모서리가 블록 칸(정수)에 오도록 엔티티 위치를 맞춘다.
+     * 보이는 블록의 가장 작은 모서리 = 엔티티 위치 + translation + min(0, scale). (히트박스가 아니라 모습 기준)
+     * translation 0, scale 1 이면 엔티티 위치가 정수일 때와 같다.
+     * 회전(엔티티 방향, left/right_rotation)이 있으면 모서리를 정할 수 없어서 엔티티 위치만 정수로 맞춘다.
+     */
+    private double alignedAxis(int axis, double value) {
+        if (!hasNoRotation()) return Math.floor(value);
+        double offset = translationOf(axis) + Math.min(0f, getScale()[axis]);
+        return Math.floor(value + offset + 1e-6) - offset;
+    }
+
+    private double translationOf(int axis) {
+        ListTag list = working.getCompoundOrEmpty("transformation").getListOrEmpty("translation");
+        return axis < list.size() && list.get(axis) instanceof NumericTag n ? n.floatValue() : 0.0;
+    }
+
+    private boolean hasNoRotation() {
+        if (rot[0] != 0f || rot[1] != 0f) return false;
+        CompoundTag t = working.getCompoundOrEmpty("transformation");
+        for (String key : new String[]{"left_rotation", "right_rotation"}) {
+            Tag q = t.get(key);
+            if (q == null) continue;
+            if (!(q instanceof ListTag list) || list.size() != 4) return false;
+            float[] identity = {0f, 0f, 0f, 1f};
+            for (int i = 0; i < 4; i++) {
+                if (!(list.get(i) instanceof NumericTag n) || n.floatValue() != identity[i]) return false;
+            }
+        }
+        return true;
     }
 
     // ---- 방향 (yaw, pitch) ----
@@ -487,6 +519,7 @@ public final class Draft {
         CompoundTag summoned = working.copy();
         summoned.put("Rotation", floats(rot[0], rot[1]));
         summoned.put("UUID", new IntArrayTag(UUIDUtil.uuidToIntArray(id)));
+        if (creating && aligning()) snapToBlock(); // 만드는 중에 scale/translation 을 바꿨어도 마지막에 맞춘다
         return "summon " + type.entityId() + " " + posString() + " " + summoned;
     }
 
@@ -499,6 +532,7 @@ public final class Draft {
     public List<String> buildCommands() {
         // 새로 만드는 경우: 현재 값 전부를 담아 summon 한 번으로 끝낸다
         if (creating) {
+            if (aligning()) snapToBlock(); // 만드는 중에 scale/translation 을 바꿨어도 마지막에 맞춘다
             CompoundTag summoned = working.copy();
             summoned.put("Rotation", floats(rot[0], rot[1]));
             return List.of("summon " + type.entityId() + " " + posString() + " " + summoned);

@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -138,6 +139,14 @@ public class DisplayEditScreen extends Screen {
     private boolean deleteArmed;
     private boolean draggingBar;
 
+    // ---- 오른쪽 파트 목록 (에디터 모드에서 여러 개/그룹을 선택하고 연 경우에만) ----
+    private static final int PANEL_W = 128;
+    /** 선택된 파트들. 2개 이상일 때만 패널을 보여 준다. */
+    private List<UUID> parts = List.of();
+    private int partPage;
+    private boolean partPageInit;
+    private int partPages = 1;
+
     public DisplayEditScreen(Draft draft) {
         super(titleFor(draft));
         this.draft = draft;
@@ -170,8 +179,11 @@ public class DisplayEditScreen extends Screen {
         scaleLabelW = Math.max(36, font.width(Component.translatable("dee.label.scale", "X")) + 4);
 
         // ---- 고정 영역 계산 ----
-        boxW = Math.min(width - 10, 372);
-        boxL = (width - boxW) / 2;
+        parts = computeParts();
+        boolean panel = parts.size() >= 2;
+        int usable = panel ? width - PANEL_W - 8 : width; // 폼이 쓸 수 있는 가로 (패널이 있으면 오른쪽을 비운다)
+        boxW = Math.min(usable - 10, 372);
+        boxL = (usable - boxW) / 2;
         boxR = boxL + boxW;
         left = boxL + PAD;
         contentW = boxW - PAD - SCROLL_RESERVE;
@@ -353,6 +365,135 @@ public class DisplayEditScreen extends Screen {
         }
         addRenderableWidget(Button.builder(Component.translatable("dee.button.cancel"), b -> onClose())
                 .bounds(boxL + 3 * (btnW + GAP), bottomY, btnW, ROW_H).build());
+
+        if (panel) addPartsPanel();
+    }
+
+    // ------------------------------------------------------------------
+    // 오른쪽 파트 목록
+    // ------------------------------------------------------------------
+
+    /** 에디터 모드의 선택에 이 엔티티가 들어 있고 선택이 2개 이상이면 그 목록, 아니면 빈 목록. */
+    private List<UUID> computeParts() {
+        if (draft.isCreating() || !GizmoEditor.isActive()) return List.of();
+        List<UUID> ids = GizmoEditor.partIds();
+        if (ids.size() < 2) return List.of();
+        String current = draft.uuid();
+        for (UUID id : ids) {
+            if (id.toString().equals(current)) return ids;
+        }
+        return List.of();
+    }
+
+    private int panelX() {
+        return width - PANEL_W - 4;
+    }
+
+    private void addPartsPanel() {
+        int px = panelX();
+        int btnY = height - 6 - ROW_H;
+
+        // 맨 아래: [그룹으로 묶기] / [그룹 해제]
+        boolean grouped = GizmoEditor.selectionGroup() != null;
+        addRenderableWidget(Button.builder(
+                        Component.translatable(grouped ? "dee.button.ungroup" : "dee.button.group"), b -> {
+                            if (grouped) GizmoEditor.ungroupSelection();
+                            else GizmoEditor.groupSelection();
+                            rebuildWidgets();
+                        })
+                .bounds(px, btnY, PANEL_W, ROW_H)
+                .tooltip(Tooltip.create(Component.translatable(grouped ? "dee.tooltip.ungroup" : "dee.tooltip.group")))
+                .build());
+
+        // 목록 (한 페이지에 들어가는 만큼만, 넘치면 [<] [>] 로 넘긴다)
+        int rowH = 18;
+        int pitch = rowH + 2;
+        int listTop = 24 + 14;
+        int pagerH = 16;
+        int pagerY = btnY - GAP - pagerH;
+        int perPage = Math.max(1, (pagerY - GAP - listTop) / pitch);
+        partPages = (parts.size() + perPage - 1) / perPage;
+
+        String current = draft.uuid();
+        if (!partPageInit) {
+            partPageInit = true;
+            for (int i = 0; i < parts.size(); i++) {
+                if (parts.get(i).toString().equals(current)) {
+                    partPage = i / perPage; // 지금 편집 중인 파트가 있는 페이지부터 보여 준다
+                    break;
+                }
+            }
+        }
+        partPage = Math.max(0, Math.min(partPage, partPages - 1));
+
+        int from = partPage * perPage;
+        int to = Math.min(parts.size(), from + perPage);
+        for (int i = from; i < to; i++) {
+            UUID id = parts.get(i);
+            String text = font.plainSubstrByWidth((i + 1) + ". " + partLabel(id), PANEL_W - 10);
+            Component label = Component.literal(text);
+            if (id.toString().equals(current)) {
+                label = label.copy().withStyle(style -> style.withColor(0xFFFF55)); // 지금 편집 중
+            }
+            addRenderableWidget(Button.builder(label, b -> switchPart(id))
+                    .bounds(px, listTop + (i - from) * pitch, PANEL_W, rowH).build());
+        }
+
+        if (partPages > 1) {
+            addRenderableWidget(Button.builder(Component.literal("<"), b -> {
+                        partPage = Math.max(0, partPage - 1);
+                        rebuildWidgets();
+                    })
+                    .bounds(px, pagerY, 24, pagerH).build());
+            addRenderableWidget(Button.builder(Component.literal(">"), b -> {
+                        partPage = Math.min(partPages - 1, partPage + 1);
+                        rebuildWidgets();
+                    })
+                    .bounds(px + PANEL_W - 24, pagerY, 24, pagerH).build());
+        }
+    }
+
+    /** 목록에 보여 줄 파트 이름: 텍스트는 내용, 블록/아이템은 ID. */
+    private String partLabel(UUID id) {
+        Display e = GizmoEditor.find(minecraft, id);
+        if (e == null) return "?";
+        CompoundTag nbt = EntityNbt.save(e);
+        if (e instanceof Display.BlockDisplay) {
+            return shortId(nbt.getCompoundOrEmpty("block_state").getStringOr("Name", "block"));
+        }
+        if (e instanceof Display.ItemDisplay) {
+            return shortId(nbt.getCompoundOrEmpty("item").getStringOr("id", "item"));
+        }
+        Tag element = nbt.get("text");
+        if (element != null) {
+            Component c = ComponentSerialization.CODEC.parse(NbtOps.INSTANCE, element).result().orElse(null);
+            if (c != null) {
+                String t = c.getString().replace('\n', ' ').trim();
+                if (!t.isEmpty()) return t;
+            }
+        }
+        return "text";
+    }
+
+    private static String shortId(String id) {
+        return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    /** 목록에서 다른 파트를 눌렀을 때: 지금 파트의 바뀐 내용을 먼저 적용하고, 그 파트의 편집 화면으로 간다. */
+    private void switchPart(UUID id) {
+        if (id.toString().equals(draft.uuid())) return;
+        Display target = GizmoEditor.find(minecraft, id);
+        if (target == null) return;
+        sendPending();
+        DisplayEditClient.openEditorScreen(minecraft, target);
+    }
+
+    private Component panelTitle() {
+        DisplayGroups.Group group = GizmoEditor.selectionGroup();
+        String title = group != null
+                ? Component.translatable("dee.panel.title_group", group.name, parts.size()).getString()
+                : Component.translatable("dee.panel.title", parts.size()).getString();
+        return Component.literal(font.plainSubstrByWidth(title, PANEL_W - 8));
     }
 
     /** 새로 추가한 태그 줄. 화면을 다시 만든 뒤 여기에 포커스를 준다. (-1 이면 없음) */
@@ -897,20 +1038,52 @@ public class DisplayEditScreen extends Screen {
 
     /** /kill 명령으로 엔티티를 지운다. (OP 권한 필요) 편집 중이던 변경 사항은 버려진다. */
     private void deleteEntity() {
+        try {
+            Display entity = GizmoEditor.find(minecraft, UUID.fromString(draft.uuid()));
+            if (entity != null) {
+                // 되돌리기 기록이 붙는 삭제 (그룹에서도 빠진다)
+                EditorOps.delete(List.of(entity), Component.translatable("dee.history.delete"));
+                onClose();
+                return;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // 아래의 기본 삭제로 처리한다
+        }
         var handler = minecraft.getConnection();
         if (handler != null) {
             handler.sendCommand("kill " + draft.uuid());
         }
+        try {
+            DisplayGroups.forget(UUID.fromString(draft.uuid())); // 그룹에서도 뺀다
+        } catch (IllegalArgumentException ignored) {
+            // UUID 형식이 아니면 그룹에 없다
+        }
         onClose();
     }
 
-    private void apply() {
-        var handler = minecraft.getConnection();
-        if (handler != null) {
-            for (String command : draft.buildCommands()) {
-                handler.sendCommand(command);
-            }
+    /** 바뀐 내용을 명령으로 보낸다. (화면은 닫지 않는다) */
+    private void sendPending() {
+        if (minecraft.getConnection() == null) return;
+        if (draft.isCreating()) {
+            // 새로 만들기: UUID 를 정해 summon 해야 되돌리기로 지울 수 있다
+            UUID id = UUID.randomUUID();
+            GizmoEditor.send(draft.buildSummonCommand(id));
+            EditorOps.recordCreate(id);
+            return;
         }
+        List<String> commands = draft.buildCommands();
+        if (commands.isEmpty()) return;
+        try {
+            Display entity = GizmoEditor.find(minecraft, UUID.fromString(draft.uuid()));
+            if (entity != null) EditorOps.recordEdit(entity); // 바뀌기 전 모습을 기록 (Ctrl+Z 용)
+        } catch (IllegalArgumentException ignored) {
+            // UUID 형식이 아니면 기록만 건너뛴다
+        }
+        for (String command : commands) GizmoEditor.send(command);
+    }
+
+    private void apply() {
+        sendPending();
         onClose();
     }
 
@@ -1219,9 +1392,25 @@ public class DisplayEditScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         // 커서 이동/입력에 맞춰 속성 툴팁 내용을 갱신 (바뀐 경우에만 다시 만든다)
         refreshPropsTooltip();
+        // 오른쪽 파트 목록의 바탕 (버튼보다 먼저 그린다)
+        if (parts.size() >= 2) {
+            int px = panelX();
+            context.fill(px - 1, 23, px + PANEL_W + 1, height - 5, 0xFF000000);
+            context.fill(px, 24, px + PANEL_W, height - 6, 0xA0000000);
+        }
         // 고정 위젯(하단 버튼)과 배경
         super.extractRenderState(context, mouseX, mouseY, delta);
-        context.centeredText(font, titleFor(draft), width / 2, 6, 0xFFFFFFFF);
+        context.centeredText(font, titleFor(draft), boxL + boxW / 2, 6, 0xFFFFFFFF);
+        if (parts.size() >= 2) {
+            int px = panelX();
+            context.text(font, panelTitle(), px + 4, 28, 0xFFFFFFFF, false);
+            if (partPages > 1) {
+                int btnY = height - 6 - ROW_H;
+                int pagerY = btnY - GAP - 16;
+                context.centeredText(font, Component.literal((partPage + 1) + " / " + partPages),
+                        px + PANEL_W / 2, pagerY + 4, 0xFFB0B0B0);
+            }
+        }
         drawPreview(context);
 
         // 스크롤 박스: 박스 밖에서는 호버 효과가 생기지 않도록 마우스 좌표를 치운다

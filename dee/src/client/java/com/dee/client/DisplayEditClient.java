@@ -57,8 +57,12 @@ public class DisplayEditClient implements ClientModInitializer {
     private record Visual(Vec3 center, double halfW, double halfH, long time) {}
 
     private final Map<Integer, Visual> visualCache = new HashMap<>();
+    private static final int VISUAL_BUDGET_PER_TICK = 12;
+    private int visualBudget;
 
     private static KeyMapping OPEN_EDITOR;
+    /** 에디터 모드에서 누른 채 클릭하면 선택에 추가/제거. 기본값은 왼쪽 Ctrl 이고 조작 설정에서 바꿀 수 있다. */
+    static KeyMapping MULTI_SELECT;
 
     /** "내 위치로" 지정을 기다리는 편집 초안. null 이면 대기 중이 아니다. */
     private static Draft pendingPlacement;
@@ -107,6 +111,12 @@ public class DisplayEditClient implements ClientModInitializer {
                 InputConstants.KEY_G,
                 category
         ));
+        MULTI_SELECT = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.dee.multi_select",
+                InputConstants.Type.KEYBOARD,
+                InputConstants.KEY_LCONTROL,
+                category
+        ));
 
         // 빈손으로 허공을 우클릭하면 UseItemCallback 이 호출되지 않고, 디스플레이 엔티티는
         // 히트박스가 없어 UseEntityCallback 도 호출되지 않는다. 그래서 틱에서 우클릭 키를 직접 확인한다.
@@ -135,10 +145,12 @@ public class DisplayEditClient implements ClientModInitializer {
     }
 
     private void onTick(Minecraft client) {
+        GizmoEditor.flush(client); // 여러 엔티티를 놓을 때 쌓아 둔 명령을 조금씩 보낸다
         Player player = client.player;
         if (player == null || client.level == null) {
             visualCache.clear();
             pendingPlacement = null;
+            EditorHistory.clear(); // 월드를 나가면 되돌리기 기록도 버린다
             GizmoEditor.exit();
             return;
         }
@@ -161,8 +173,11 @@ public class DisplayEditClient implements ClientModInitializer {
             if (GizmoEditor.isActive() && noScreen && client.gui.screen() == null) {
                 if (OPEN_EDITOR.consumeClick()) {
                     while (OPEN_EDITOR.consumeClick()) { /* 남은 눌림 소비 */ }
-                    if (hovered != null) {
-                        openEditorScreen(client, hovered);
+                    if (EditorShortcuts.ctrlDown(client)) {
+                        // Ctrl+G 는 그룹 단축키(EditorShortcuts 가 처리)라서 편집 UI 는 열지 않는다
+                    } else if (hovered != null) {
+                        // 이미 선택된 것이면 선택 전체의 파트 목록과 함께, 아니면 이것(또는 그 그룹)만 선택하고 연다
+                        GizmoEditor.openFor(client, hovered);
                     } else {
                         Vec3 p = player.position();
                         client.gui.setScreen(new DisplayEditScreen(Draft.forNew(p.x, p.y, p.z)));
@@ -294,12 +309,14 @@ public class DisplayEditClient implements ClientModInitializer {
                 ? Double.MAX_VALUE : blockHit.getLocation().distanceTo(eye);
 
         AABB area = player.getBoundingBox().inflate(REACH + 4.0);
+        visualBudget = VISUAL_BUDGET_PER_TICK;
         long now = client.level.getGameTime();
 
         Display best = null;
         double bestScore = Double.MAX_VALUE;
         for (Display e : client.level.getEntitiesOfClass(Display.class, area, x -> x instanceof TextDisplay || x instanceof BlockDisplay || x instanceof ItemDisplay)) {
             Visual v = visualOf(client, e, now);
+            if (v == null) continue;
 
             Vec3 rel = v.center().subtract(eye);
             double along = rel.dot(dir);
@@ -323,8 +340,12 @@ public class DisplayEditClient implements ClientModInitializer {
      */
     private Visual visualOf(Minecraft client, Display e, long now) {
         Visual cached = visualCache.get(e.getId());
-        if (cached != null && now - cached.time() < CACHE_TICKS) return cached;
-        if (visualCache.size() > 512) visualCache.clear();
+        // 엔티티마다 만료 시각을 어긋나게 해서(지터) 한 틱에 전부 다시 계산하는 일을 막는다
+        if (cached != null && now - cached.time() < CACHE_TICKS + (e.getId() & 7)) return cached;
+        // 틱마다 새로 읽는 수를 제한한다. 넘으면 이전 값(없으면 null)을 쓰고 다음 틱에 이어서 한다
+        if (visualBudget <= 0) return cached;
+        visualBudget--;
+        if (visualCache.size() > 4096) visualCache.clear();
 
         CompoundTag nbt = EntityNbt.save(e);
         CompoundTag transformation = nbt.getCompoundOrEmpty("transformation");
