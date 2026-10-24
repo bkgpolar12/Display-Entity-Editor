@@ -1,6 +1,11 @@
 package com.dee.client;
 
 import net.minecraft.item.Item;
+import net.minecraft.block.BlockRenderType;
+import net.minecraft.client.render.LightmapTextureManager;
+import net.minecraft.client.render.OverlayTexture;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.client.render.RenderLayer;
 import org.lwjgl.glfw.GLFW;
@@ -71,6 +76,12 @@ public class DisplayEditScreen extends Screen {
     private static final int COLOR_OK = 0xFFE0E0E0;
     private static final int COLOR_ERR = 0xFFFF5555;
     private static final int COLOR_STYLED = 0xFFFFD27F;
+    /** 입력칸 힌트(예시 글자) 색. 1.21.5 의 setPlaceholder 는 색을 입히지 않아 흰색으로 보이므로 직접 회색을 입힌다. */
+    private static final int COLOR_HINT = 0x808080;
+
+    private static Text hint(Text text) {
+        return text.copy().styled(style -> style.withColor(COLOR_HINT));
+    }
 
     /** 값 이름은 lang 파일의 dee.align.<값>, dee.billboard.<값> 키에서 가져온다. */
     private static final String[] ALIGN = {"center", "left", "right"};
@@ -502,7 +513,7 @@ public class DisplayEditScreen extends Screen {
             final int index = i;
             TextFieldWidget f = addScroll(new TextFieldWidget(textRenderer, left, 0, fieldW, ROW_H, Text.empty()), cy);
             f.setMaxLength(64);
-            f.setPlaceholder(Text.translatable("dee.hint.tag"));
+            f.setPlaceholder(hint(Text.translatable("dee.hint.tag")));
             f.setText(rows.get(i));
             bindFilter(f, s -> s.matches("[A-Za-z0-9_.+\\-]*"), s -> draft.setTagRow(index, s));
             if (i == focusTagRow) setFocused(f);
@@ -542,7 +553,7 @@ public class DisplayEditScreen extends Screen {
             textField.setMaxLength(4096);
             NbtElement element = draft.get("text");
             textField.setText(element == null ? "" : toListForm(element).toString());
-            textField.setPlaceholder(Text.literal("{translate:\"key\"}"));
+            textField.setPlaceholder(hint(Text.literal("{translate:\"key\"}")));
             textField.setChangedListener(this::onAdvancedTextEdit);
         } else {
             textField.setMaxLength(1024);
@@ -580,7 +591,7 @@ public class DisplayEditScreen extends Screen {
                 contentW - labelW - GAP - pickW, ROW_H, Text.empty()), cy);
         addScroll(pickButton("dee.tooltip.pick_item", this::openItemPicker), cy);
         itemField.setMaxLength(256);
-        itemField.setPlaceholder(Text.literal("minecraft:diamond_sword"));
+        itemField.setPlaceholder(hint(Text.literal("minecraft:diamond_sword")));
         itemField.setTooltip(Tooltip.of(Text.translatable("dee.tooltip.item")));
         itemField.setText(draft.getItemId());
         itemField.setChangedListener(s -> updateItem());
@@ -597,7 +608,7 @@ public class DisplayEditScreen extends Screen {
             profileField = addScroll(new TextFieldWidget(textRenderer, left + labelW, 0,
                     contentW - labelW, ROW_H, Text.empty()), cy);
             profileField.setMaxLength(2048);
-            profileField.setPlaceholder(Text.translatable("dee.hint.item_profile"));
+            profileField.setPlaceholder(hint(Text.translatable("dee.hint.item_profile")));
             profileField.setTooltip(Tooltip.of(Text.translatable("dee.tooltip.item_profile")));
             profileField.setText(ProfileText.format(draft.getItemProfile()));
             profileField.setChangedListener(this::updateProfile);
@@ -721,7 +732,7 @@ public class DisplayEditScreen extends Screen {
                 contentW - labelW - GAP - pickW, ROW_H, Text.empty()), cy);
         addScroll(pickButton("dee.tooltip.pick_block", this::openBlockPicker), cy);
         blockField.setMaxLength(256);
-        blockField.setPlaceholder(Text.literal("minecraft:oak_stairs"));
+        blockField.setPlaceholder(hint(Text.literal("minecraft:oak_stairs")));
         blockField.setTooltip(Tooltip.of(Text.translatable("dee.tooltip.block")));
         BlockState current = element == null ? null : decodeState(element);
         blockField.setText(current != null
@@ -731,7 +742,7 @@ public class DisplayEditScreen extends Screen {
         propsField = addScroll(new TextFieldWidget(textRenderer, left + labelW, 0,
                 contentW - labelW, ROW_H, Text.empty()), cy + PITCH);
         propsField.setMaxLength(1024);
-        propsField.setPlaceholder(Text.literal("facing=east,half=top"));
+        propsField.setPlaceholder(hint(Text.literal("facing=east,half=top")));
         propsField.setText(current != null ? propertiesOf(current) : "");
 
         previewState = current;
@@ -1254,7 +1265,7 @@ public class DisplayEditScreen extends Screen {
     private void addHexField(int x, int contentY, int w, String key, boolean withAlpha) {
         TextFieldWidget f = addScroll(new TextFieldWidget(textRenderer, x, 0, w, ROW_H, Text.empty()), contentY);
         f.setMaxLength(9);
-        f.setPlaceholder(Text.literal(withAlpha ? "#AARRGGBB" : "#RRGGBB"));
+        f.setPlaceholder(hint(Text.literal(withAlpha ? "#AARRGGBB" : "#RRGGBB")));
         if (draft.has(key)) {
             int v = draft.getInt(key, 0);
             f.setText(withAlpha ? String.format(Locale.ROOT, "#%08X", v)
@@ -1442,11 +1453,17 @@ public class DisplayEditScreen extends Screen {
         context.fill(x1, thumbY, x2, thumbY + thumbH, draggingBar ? 0xFFFFFFFF : 0xFFA0A0A0);
     }
 
+    /** 인벤토리 블록 아이콘과 같은 등각 시점. (Z 반전은 GUI 의 y 축이 아래로 향하기 때문) */
+    private static final Quaternionf BLOCK_VIEW = new Quaternionf()
+            .rotateZ((float) Math.PI)
+            .rotateX((float) Math.toRadians(-30))
+            .rotateY((float) Math.toRadians(45));
+
     /**
-     * 블록 미리보기 (1.21.5 포팅판): 블록의 아이템 아이콘을 크기(X,Y)에 맞춰 확대해서 보여 준다.
-     * 26.x 판은 블록 디스플레이와 같은 렌더러로 BlockState(속성 포함)를 그렸지만, 그 API 는 1.21.5 에 없어서
-     * facing/half 같은 속성은 미리보기에 반영되지 않는다. (저장되는 block_state 는 그대로 정확하다)
-     * 아이템이 없는 블록(물, 불 등)은 대표색 사각형으로 대체한다.
+     * 블록 미리보기: 블록 디스플레이 엔티티가 그리는 방식 그대로(BlockState 의 실제 블록 모델) 렌더링한다.
+     * 아이템 모델이 아니므로 문, 묘목, 울타리 같은 블록도 월드에 놓였을 때의 모습으로 보이고,
+     * facing/half 등 속성도 반영된다. 크기(X,Y,Z)도 반영된다.
+     * 모델이 없는 블록(물 등)은 대표색 사각형으로 대체한다.
      */
     private void drawBlockPreview(DrawContext context, int x1, int y1, int x2, int y2) {
         BlockState state = previewState;
@@ -1455,27 +1472,48 @@ public class DisplayEditScreen extends Screen {
         float[] scale = draft.getScale();
         float sx = Math.max(0.05f, Math.abs(scale[0]));
         float sy = Math.max(0.05f, Math.abs(scale[1]));
+        float sz = Math.max(0.05f, Math.abs(scale[2]));
 
         int ry2 = y2 - textRenderer.fontHeight - 4; // 아래 이름 글자 자리 제외
-        float base = 48f;
         float availW = (x2 - x1) - 12f;
         float availH = (ry2 - y1) - 8f;
-        float fit = Math.max(0.01f, Math.min(1f, Math.min(availW / (base * sx), availH / (base * sy))));
+
+        // 회전한 상자(sx*sy*sz)가 화면에서 차지하는 폭/높이를 구해 영역에 맞춘다.
+        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+        Vector3f v = new Vector3f();
+        for (int i = 0; i < 8; i++) {
+            v.set((i & 1) == 0 ? -sx / 2 : sx / 2, (i & 2) == 0 ? -sy / 2 : sy / 2, (i & 4) == 0 ? -sz / 2 : sz / 2);
+            BLOCK_VIEW.transform(v);
+            minX = Math.min(minX, v.x);
+            maxX = Math.max(maxX, v.x);
+            minY = Math.min(minY, v.y);
+            maxY = Math.max(maxY, v.y);
+        }
+        float pxPerUnit = Math.max(0.5f, Math.min(48f, Math.min(availW / (maxX - minX), availH / (maxY - minY))));
 
         context.enableScissor(x1, y1, x2, y2);
-        Item item = state.getBlock().asItem();
-        if (item != Items.AIR) {
-            float k = base * fit / 16f;
+        if (state.getRenderType() != BlockRenderType.INVISIBLE) {
+            context.draw(); // 앞서 그린 배경을 먼저 내보낸다
             MatrixStack m = context.getMatrices();
             m.push();
-            m.translate((x1 + x2) / 2f, (y1 + ry2) / 2f, 0f);
-            m.scale(sx * k, sy * k, 1f);
-            m.translate(-8f, -8f, 0f);
-            context.drawItem(new ItemStack(item), 0, 0);
+            // 엔티티 GUI 렌더링과 같은 변환: 중심으로 옮기고 → 확대(Z 반전) → 시점 회전
+            m.translate((x1 + x2) / 2f, (y1 + ry2) / 2f, 100f);
+            m.scale(pxPerUnit, pxPerUnit, -pxPerUnit);
+            m.multiply(BLOCK_VIEW);
+            // 블록은 0~1 범위이므로, 크기를 적용한 뒤 중심이 원점에 오도록 옮긴다.
+            m.scale(sx, sy, sz);
+            m.translate(-0.5f, -0.5f, -0.5f);
+
+            // 1.21.5 의 DrawContext 에는 getVertexConsumers() 가 없다.
+            // draw(Consumer<VertexConsumerProvider>) 가 내부 버퍼를 넘겨 주고 그린 뒤 알아서 내보낸다.
+            context.draw(consumers -> client.getBlockRenderManager().renderBlockAsEntity(
+                    state, m, consumers, LightmapTextureManager.MAX_LIGHT_COORDINATE, OverlayTexture.DEFAULT_UV));
             m.pop();
         } else {
-            int w = Math.max(1, Math.round(base * fit * sx));
-            int h = Math.max(1, Math.round(base * fit * sy));
+            // 모델이 없는 블록(물 등)은 대표색 사각형으로 대체
+            int w = Math.max(1, Math.round(pxPerUnit * sx));
+            int h = Math.max(1, Math.round(pxPerUnit * sy));
             int bx = (x1 + x2) / 2 - w / 2;
             int by = (y1 + ry2) / 2 - h / 2;
             int rgb = state.getBlock().getDefaultMapColor().color & 0xFFFFFF;
