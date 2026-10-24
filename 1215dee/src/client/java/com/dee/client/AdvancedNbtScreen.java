@@ -1,9 +1,9 @@
 package com.dee.client;
 
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.text.Text;
 
@@ -131,6 +131,7 @@ public class AdvancedNbtScreen extends Screen {
     /** 닫으면 메인 화면으로 돌아간다. (새로 만들어야 입력칸에 바뀐 값이 반영된다) */
     @Override
     public void close() {
+        // 26.2 부터 MinecraftClient#setScreen 은 Gui#setScreen 으로 옮겨졌다.
         client.setScreen(new DisplayEditScreen(draft));
     }
 
@@ -140,16 +141,16 @@ public class AdvancedNbtScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 6, 0xFFFFFFFF);
-        context.drawCenteredTextWithShadow(textRenderer,
+    public void render(DrawContext graphics, int mouseX, int mouseY, float delta) {
+        super.render(graphics, mouseX, mouseY, delta);
+        graphics.drawCenteredTextWithShadow(textRenderer, title, width / 2, 6, 0xFFFFFFFF);
+        graphics.drawCenteredTextWithShadow(textRenderer,
                 Text.translatable("dee.advanced.hint"),
                 width / 2, 17, 0xFFA0A0A0);
 
         for (int i = firstRow; i < Math.min(keys.size(), firstRow + visibleRows); i++) {
             int y = listTop + (i - firstRow) * PITCH;
-            context.drawText(textRenderer, keys.get(i), left, y + 6, 0xFFB0B0B0, false);
+            graphics.drawText(textRenderer, keys.get(i), left, y + 6, 0xFFB0B0B0, false);
         }
     }
 }

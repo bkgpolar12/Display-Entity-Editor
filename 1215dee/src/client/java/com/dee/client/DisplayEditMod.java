@@ -1,5 +1,6 @@
 package com.dee.client;
 
+import net.minecraft.entity.decoration.DisplayEntity;
 import com.dee.DisplayEntityEditor;
 import com.dee.client.DisplayEditPayloads.Apply;
 import com.dee.client.DisplayEditPayloads.OpenRequest;
@@ -7,12 +8,11 @@ import com.dee.client.DisplayEditPayloads.OpenScreen;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
-import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.entity.Entity;
 
 import java.util.Set;
 
@@ -32,7 +32,7 @@ public class DisplayEditMod implements ModInitializer {
             "block_state",
             // item_display 전용
             "item", "item_display",
-            // 공통 Display
+            // 공통 DisplayEntity
             "Tags", "transformation", "billboard", "brightness", "view_range",
             "shadow_radius", "shadow_strength", "glow_color_override",
             "width", "height",
@@ -41,11 +41,11 @@ public class DisplayEditMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        PayloadTypeRegistry.playC2S().register(OpenRequest.ID, OpenRequest.CODEC);
-        PayloadTypeRegistry.playC2S().register(Apply.ID, Apply.CODEC);
-        PayloadTypeRegistry.playS2C().register(OpenScreen.ID, OpenScreen.CODEC);
+        PayloadTypeRegistry.playC2S().register(OpenRequest.TYPE, OpenRequest.CODEC);
+        PayloadTypeRegistry.playC2S().register(Apply.TYPE, Apply.CODEC);
+        PayloadTypeRegistry.playS2C().register(OpenScreen.TYPE, OpenScreen.CODEC);
 
-        ServerPlayNetworking.registerGlobalReceiver(OpenRequest.ID, (payload, context) -> {
+        ServerPlayNetworking.registerGlobalReceiver(OpenRequest.TYPE, (payload, context) -> {
             ServerPlayerEntity player = context.player();
             try {
                 Entity entity = resolve(player, payload.entityId());
@@ -59,7 +59,7 @@ public class DisplayEditMod implements ModInitializer {
             }
         });
 
-        ServerPlayNetworking.registerGlobalReceiver(Apply.ID, (payload, context) -> {
+        ServerPlayNetworking.registerGlobalReceiver(Apply.TYPE, (payload, context) -> {
             ServerPlayerEntity player = context.player();
             try {
                 Entity entity = resolve(player, payload.entityId());
@@ -86,7 +86,7 @@ public class DisplayEditMod implements ModInitializer {
         });
     }
 
-    /** 권한/거리/타입 검증. 통과하면 display 엔티티, 아니면 사유를 알리고 null */
+    /** 권한/거리/타입 검증. 통과하면 text_display 엔티티, 아니면 사유를 알리고 null */
     private static Entity resolve(ServerPlayerEntity player, int entityId) {
         if (!player.isCreative()) return reject(player, "크리에이티브 모드가 아닙니다");
         // 서버용으로 쓸 때는 OP 권한 검사를 추가하세요. (1.21.5: player.hasPermissionLevel(2))

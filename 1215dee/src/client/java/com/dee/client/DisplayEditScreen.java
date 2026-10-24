@@ -1,38 +1,36 @@
 package com.dee.client;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockRenderType;
-import net.minecraft.block.BlockState;
+import net.minecraft.item.Item;
+import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.client.render.RenderLayer;
+import org.lwjgl.glfw.GLFW;
+import net.minecraft.entity.decoration.DisplayEntity;
+import net.minecraft.util.Formatting;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.widget.SliderWidget;
+import net.minecraft.client.gui.widget.ClickableWidget;
+import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.Element;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.tooltip.Tooltip;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.client.gui.widget.SliderWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.render.DiffuseLighting;
-import net.minecraft.client.render.OverlayTexture;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
+import net.minecraft.registry.Registries;
+import net.minecraft.util.Identifier;
+import net.minecraft.registry.RegistryOps;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.NbtString;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryOps;
-import net.minecraft.state.property.Property;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.OrderedText;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.text.Text;
 import net.minecraft.text.TextCodecs;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.OrderedText;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.state.property.Property;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -42,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -132,6 +131,14 @@ public class DisplayEditScreen extends Screen {
     private boolean deleteArmed;
     private boolean draggingBar;
 
+    // ---- 오른쪽 파트 목록 (에디터 모드에서 여러 개/그룹을 선택하고 연 경우에만) ----
+    private static final int PANEL_W = 128;
+    /** 선택된 파트들. 2개 이상일 때만 패널을 보여 준다. */
+    private List<UUID> parts = List.of();
+    private int partPage;
+    private boolean partPageInit;
+    private int partPages = 1;
+
     public DisplayEditScreen(Draft draft) {
         super(titleFor(draft));
         this.draft = draft;
@@ -164,8 +171,11 @@ public class DisplayEditScreen extends Screen {
         scaleLabelW = Math.max(36, textRenderer.getWidth(Text.translatable("dee.label.scale", "X")) + 4);
 
         // ---- 고정 영역 계산 ----
-        boxW = Math.min(width - 10, 372);
-        boxL = (width - boxW) / 2;
+        parts = computeParts();
+        boolean panel = parts.size() >= 2;
+        int usable = panel ? width - PANEL_W - 8 : width; // 폼이 쓸 수 있는 가로 (패널이 있으면 오른쪽을 비운다)
+        boxW = Math.min(usable - 10, 372);
+        boxL = (usable - boxW) / 2;
         boxR = boxL + boxW;
         left = boxL + PAD;
         contentW = boxW - PAD - SCROLL_RESERVE;
@@ -324,21 +334,158 @@ public class DisplayEditScreen extends Screen {
         addDrawableChild(ButtonWidget.builder(
                         Text.translatable(draft.isCreating() ? "dee.button.create" : "dee.button.apply"), b -> apply())
                 .dimensions(boxL + (btnW + GAP), bottomY, btnW, ROW_H).build());
-        ButtonWidget deleteButton = addDrawableChild(ButtonWidget.builder(deleteLabel(), b -> {
-                    if (!deleteArmed) {
-                        // 첫 클릭: 확인 상태로 바꾼다. 한 번 더 눌러야 삭제된다.
-                        deleteArmed = true;
-                        b.setMessage(deleteLabel());
-                    } else {
-                        deleteEntity();
-                    }
-                })
-                .dimensions(boxL + 2 * (btnW + GAP), bottomY, btnW, ROW_H)
-                .tooltip(Tooltip.of(Text.translatable("dee.tooltip.delete")))
-                .build());
-        deleteButton.active = !draft.isCreating(); // 아직 없는 엔티티는 지울 수 없다
+        if (draft.isCreating()) {
+            // 아직 없는 엔티티는 지울 수 없으므로, 그 자리에 [에디터 모드] 버튼을 둔다
+            addDrawableChild(ButtonWidget.builder(Text.translatable("dee.button.editor_mode"),
+                            b -> DisplayEditClient.beginEditorFromDraft(client, draft))
+                    .dimensions(boxL + 2 * (btnW + GAP), bottomY, btnW, ROW_H)
+                    .tooltip(Tooltip.of(Text.translatable("dee.tooltip.editor_mode")))
+                    .build());
+        } else {
+            addDrawableChild(ButtonWidget.builder(deleteLabel(), b -> {
+                        if (!deleteArmed) {
+                            // 첫 클릭: 확인 상태로 바꾼다. 한 번 더 눌러야 삭제된다.
+                            deleteArmed = true;
+                            b.setMessage(deleteLabel());
+                        } else {
+                            deleteEntity();
+                        }
+                    })
+                    .dimensions(boxL + 2 * (btnW + GAP), bottomY, btnW, ROW_H)
+                    .tooltip(Tooltip.of(Text.translatable("dee.tooltip.delete")))
+                    .build());
+        }
         addDrawableChild(ButtonWidget.builder(Text.translatable("dee.button.cancel"), b -> close())
                 .dimensions(boxL + 3 * (btnW + GAP), bottomY, btnW, ROW_H).build());
+
+        if (panel) addPartsPanel();
+    }
+
+    // ------------------------------------------------------------------
+    // 오른쪽 파트 목록
+    // ------------------------------------------------------------------
+
+    /** 에디터 모드의 선택에 이 엔티티가 들어 있고 선택이 2개 이상이면 그 목록, 아니면 빈 목록. */
+    private List<UUID> computeParts() {
+        if (draft.isCreating() || !GizmoEditor.isActive()) return List.of();
+        List<UUID> ids = GizmoEditor.partIds();
+        if (ids.size() < 2) return List.of();
+        String current = draft.uuid();
+        for (UUID id : ids) {
+            if (id.toString().equals(current)) return ids;
+        }
+        return List.of();
+    }
+
+    private int panelX() {
+        return width - PANEL_W - 4;
+    }
+
+    private void addPartsPanel() {
+        int px = panelX();
+        int btnY = height - 6 - ROW_H;
+
+        // 맨 아래: [그룹으로 묶기] / [그룹 해제]
+        boolean grouped = GizmoEditor.selectionGroup() != null;
+        addDrawableChild(ButtonWidget.builder(
+                        Text.translatable(grouped ? "dee.button.ungroup" : "dee.button.group"), b -> {
+                            if (grouped) GizmoEditor.ungroupSelection();
+                            else GizmoEditor.groupSelection();
+                            clearAndInit();
+                        })
+                .dimensions(px, btnY, PANEL_W, ROW_H)
+                .tooltip(Tooltip.of(Text.translatable(grouped ? "dee.tooltip.ungroup" : "dee.tooltip.group")))
+                .build());
+
+        // 목록 (한 페이지에 들어가는 만큼만, 넘치면 [<] [>] 로 넘긴다)
+        int rowH = 18;
+        int pitch = rowH + 2;
+        int listTop = 24 + 14;
+        int pagerH = 16;
+        int pagerY = btnY - GAP - pagerH;
+        int perPage = Math.max(1, (pagerY - GAP - listTop) / pitch);
+        partPages = (parts.size() + perPage - 1) / perPage;
+
+        String current = draft.uuid();
+        if (!partPageInit) {
+            partPageInit = true;
+            for (int i = 0; i < parts.size(); i++) {
+                if (parts.get(i).toString().equals(current)) {
+                    partPage = i / perPage; // 지금 편집 중인 파트가 있는 페이지부터 보여 준다
+                    break;
+                }
+            }
+        }
+        partPage = Math.max(0, Math.min(partPage, partPages - 1));
+
+        int from = partPage * perPage;
+        int to = Math.min(parts.size(), from + perPage);
+        for (int i = from; i < to; i++) {
+            UUID id = parts.get(i);
+            String text = textRenderer.trimToWidth((i + 1) + ". " + partLabel(id), PANEL_W - 10);
+            Text label = Text.literal(text);
+            if (id.toString().equals(current)) {
+                label = label.copy().styled(style -> style.withColor(0xFFFF55)); // 지금 편집 중
+            }
+            addDrawableChild(ButtonWidget.builder(label, b -> switchPart(id))
+                    .dimensions(px, listTop + (i - from) * pitch, PANEL_W, rowH).build());
+        }
+
+        if (partPages > 1) {
+            addDrawableChild(ButtonWidget.builder(Text.literal("<"), b -> {
+                        partPage = Math.max(0, partPage - 1);
+                        clearAndInit();
+                    })
+                    .dimensions(px, pagerY, 24, pagerH).build());
+            addDrawableChild(ButtonWidget.builder(Text.literal(">"), b -> {
+                        partPage = Math.min(partPages - 1, partPage + 1);
+                        clearAndInit();
+                    })
+                    .dimensions(px + PANEL_W - 24, pagerY, 24, pagerH).build());
+        }
+    }
+
+    /** 목록에 보여 줄 파트 이름: 텍스트는 내용, 블록/아이템은 ID. */
+    private String partLabel(UUID id) {
+        DisplayEntity e = GizmoEditor.find(client, id);
+        if (e == null) return "?";
+        NbtCompound nbt = EntityNbt.save(e);
+        if (e instanceof DisplayEntity.BlockDisplayEntity) {
+            return shortId(nbt.getCompoundOrEmpty("block_state").getString("Name", "block"));
+        }
+        if (e instanceof DisplayEntity.ItemDisplayEntity) {
+            return shortId(nbt.getCompoundOrEmpty("item").getString("id", "item"));
+        }
+        NbtElement element = nbt.get("text");
+        if (element != null) {
+            Text c = TextCodecs.CODEC.parse(NbtOps.INSTANCE, element).result().orElse(null);
+            if (c != null) {
+                String t = c.getString().replace('\n', ' ').trim();
+                if (!t.isEmpty()) return t;
+            }
+        }
+        return "text";
+    }
+
+    private static String shortId(String id) {
+        return id.startsWith("minecraft:") ? id.substring("minecraft:".length()) : id;
+    }
+
+    /** 목록에서 다른 파트를 눌렀을 때: 지금 파트의 바뀐 내용을 먼저 적용하고, 그 파트의 편집 화면으로 간다. */
+    private void switchPart(UUID id) {
+        if (id.toString().equals(draft.uuid())) return;
+        DisplayEntity target = GizmoEditor.find(client, id);
+        if (target == null) return;
+        sendPending();
+        DisplayEditClient.openEditorScreen(client, target);
+    }
+
+    private Text panelTitle() {
+        DisplayGroups.Group group = GizmoEditor.selectionGroup();
+        String title = group != null
+                ? Text.translatable("dee.panel.title_group", group.name, parts.size()).getString()
+                : Text.translatable("dee.panel.title", parts.size()).getString();
+        return Text.literal(textRenderer.trimToWidth(title, PANEL_W - 8));
     }
 
     /** 새로 추가한 태그 줄. 화면을 다시 만든 뒤 여기에 포커스를 준다. (-1 이면 없음) */
@@ -574,7 +721,7 @@ public class DisplayEditScreen extends Screen {
                 contentW - labelW - GAP - pickW, ROW_H, Text.empty()), cy);
         addScroll(pickButton("dee.tooltip.pick_block", this::openBlockPicker), cy);
         blockField.setMaxLength(256);
-        blockField.setPlaceholder(Text.literal(""));
+        blockField.setPlaceholder(Text.literal("minecraft:oak_stairs"));
         blockField.setTooltip(Tooltip.of(Text.translatable("dee.tooltip.block")));
         BlockState current = element == null ? null : decodeState(element);
         blockField.setText(current != null
@@ -584,7 +731,7 @@ public class DisplayEditScreen extends Screen {
         propsField = addScroll(new TextFieldWidget(textRenderer, left + labelW, 0,
                 contentW - labelW, ROW_H, Text.empty()), cy + PITCH);
         propsField.setMaxLength(1024);
-        propsField.setPlaceholder(Text.literal(""));
+        propsField.setPlaceholder(Text.literal("facing=east,half=top"));
         propsField.setText(current != null ? propertiesOf(current) : "");
 
         previewState = current;
@@ -778,7 +925,15 @@ public class DisplayEditScreen extends Screen {
     }
 
     private static BlockState decodeState(NbtElement tag) {
-        return BlockState.CODEC.parse(NbtOps.INSTANCE, tag).result().orElse(null);
+        // 1.21.5 의 BlockState 코덱은 {Name:..,Properties:..} 컴파운드만 읽는다. 문자열이면 이름만 감싸서 읽는다.
+        NbtElement source = tag;
+        if (tag instanceof NbtString) {
+            NbtCompound wrapped = new NbtCompound();
+            String raw = blockNameOf(tag).trim();
+            wrapped.putString("Name", raw.contains(":") ? raw : "minecraft:" + raw);
+            source = wrapped;
+        }
+        return BlockState.CODEC.parse(NbtOps.INSTANCE, source).result().orElse(null);
     }
 
     /** "facing=east,half=top" (앞뒤 [ ] 는 있어도 됨) -> {facing:"east",half:"top"}. 문법 오류면 null. */
@@ -814,17 +969,10 @@ public class DisplayEditScreen extends Screen {
         return open >= 0 ? raw.substring(0, open) : raw;
     }
 
-    /**
-     * 코덱으로 읽어 블록을 얻는다. 읽을 수 없으면 null.
-     * 코덱은 없는 블록 이름을 공기로 읽어 버리므로, 이름이 air 로 끝나지 않는데 공기면 없는 블록으로 본다.
-     */
+    /** 이름("stone" / "minecraft:stone")으로 블록을 찾는다. 없는 블록이면 null. */
     private static Block decodeBlock(NbtElement tag, String name) {
-        // BlockState.CODEC 은 {Name:..,Properties:..} 컴파운드만 읽으므로 문자열 이름은 레지스트리에서 직접 찾는다.
         Identifier id = parseBlockId(name);
-        if (id == null) return null;
-        Block block = Registries.BLOCK.get(id);
-        if (block.getDefaultState().isAir() && !name.endsWith("air")) return null;
-        return block;
+        return id == null ? null : Registries.BLOCK.get(id);
     }
 
     /** 스타일 섹션(텍스트). 다음 줄의 contentY 를 돌려준다. */
@@ -886,20 +1034,52 @@ public class DisplayEditScreen extends Screen {
 
     /** /kill 명령으로 엔티티를 지운다. (OP 권한 필요) 편집 중이던 변경 사항은 버려진다. */
     private void deleteEntity() {
+        try {
+            DisplayEntity entity = GizmoEditor.find(client, UUID.fromString(draft.uuid()));
+            if (entity != null) {
+                // 되돌리기 기록이 붙는 삭제 (그룹에서도 빠진다)
+                EditorOps.delete(List.of(entity), Text.translatable("dee.history.delete"));
+                close();
+                return;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // 아래의 기본 삭제로 처리한다
+        }
         var handler = client.getNetworkHandler();
         if (handler != null) {
             handler.sendChatCommand("kill " + draft.uuid());
         }
+        try {
+            DisplayGroups.forget(UUID.fromString(draft.uuid())); // 그룹에서도 뺀다
+        } catch (IllegalArgumentException ignored) {
+            // UUID 형식이 아니면 그룹에 없다
+        }
         close();
     }
 
-    private void apply() {
-        var handler = client.getNetworkHandler();
-        if (handler != null) {
-            for (String command : draft.buildCommands()) {
-                handler.sendChatCommand(command);
-            }
+    /** 바뀐 내용을 명령으로 보낸다. (화면은 닫지 않는다) */
+    private void sendPending() {
+        if (client.getNetworkHandler() == null) return;
+        if (draft.isCreating()) {
+            // 새로 만들기: UUID 를 정해 summon 해야 되돌리기로 지울 수 있다
+            UUID id = UUID.randomUUID();
+            GizmoEditor.send(draft.buildSummonCommand(id));
+            EditorOps.recordCreate(id);
+            return;
         }
+        List<String> commands = draft.buildCommands();
+        if (commands.isEmpty()) return;
+        try {
+            DisplayEntity entity = GizmoEditor.find(client, UUID.fromString(draft.uuid()));
+            if (entity != null) EditorOps.recordEdit(entity); // 바뀌기 전 모습을 기록 (Ctrl+Z 용)
+        } catch (IllegalArgumentException ignored) {
+            // UUID 형식이 아니면 기록만 건너뛴다
+        }
+        for (String command : commands) GizmoEditor.send(command);
+    }
+
+    private void apply() {
+        sendPending();
         close();
     }
 
@@ -975,12 +1155,11 @@ public class DisplayEditScreen extends Screen {
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
-    // 1.21.5 는 마우스 입력이 (x, y, button) 으로 전달된다. (MouseButtonEvent 는 1.21.9 이후)
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        boolean leftButton = button == GLFW.GLFW_MOUSE_BUTTON_LEFT;
+        boolean left = button == GLFW.GLFW_MOUSE_BUTTON_LEFT;
         // 스크롤바 잡기
-        if (leftButton && maxScroll() > 0 && inBox(mouseX, mouseY) && mouseX >= boxR - SCROLL_RESERVE + 1) {
+        if (left && maxScroll() > 0 && inBox(mouseX, mouseY) && mouseX >= boxR - SCROLL_RESERVE + 1) {
             draggingBar = true;
             dragBarTo(mouseY);
             return true;
@@ -990,7 +1169,7 @@ public class DisplayEditScreen extends Screen {
             for (Element child : children()) {
                 if (!scrollWidgets.contains(child) && child.mouseClicked(mouseX, mouseY, button)) {
                     setFocused(child);
-                    if (leftButton) setDragging(true);
+                    if (left) setDragging(true);
                     return true;
                 }
             }
@@ -1001,12 +1180,12 @@ public class DisplayEditScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (draggingBar) {
             dragBarTo(mouseY);
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
     @Override
@@ -1120,12 +1299,26 @@ public class DisplayEditScreen extends Screen {
     }
 
     /**
-     * 입력 필터. 1.21.5 에서는 TextFieldWidget#setTextPredicate 가 있어서 그걸 그대로 쓴다.
-     * 허용되지 않는 입력은 위젯이 알아서 거부하고, 허용된 값만 변경 리스너로 전달된다.
+     * 입력 필터. 26.1 에서 TextFieldWidget#setFilter 가 제거되어, 응답자(responder) 안에서 직접 걸러낸다.
+     * 허용되지 않는 입력이 들어오면 마지막으로 허용된 값으로 되돌린다.
      */
     private static void bindFilter(TextFieldWidget box, Predicate<String> filter, Consumer<String> onValid) {
-        box.setTextPredicate(filter);
-        box.setChangedListener(onValid);
+        String[] last = {filter.test(box.getText()) ? box.getText() : ""};
+        boolean[] reverting = {false};
+        box.setChangedListener(s -> {
+            if (reverting[0]) return;
+            if (!filter.test(s)) {
+                reverting[0] = true;
+                try {
+                    box.setText(last[0]);
+                } finally {
+                    reverting[0] = false;
+                }
+                return;
+            }
+            last[0] = s;
+            onValid.accept(s);
+        });
     }
 
     private Text advancedLabel() {
@@ -1192,9 +1385,25 @@ public class DisplayEditScreen extends Screen {
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         // 커서 이동/입력에 맞춰 속성 툴팁 내용을 갱신 (바뀐 경우에만 다시 만든다)
         refreshPropsTooltip();
+        // 오른쪽 파트 목록의 바탕 (버튼보다 먼저 그린다)
+        if (parts.size() >= 2) {
+            int px = panelX();
+            context.fill(px - 1, 23, px + PANEL_W + 1, height - 5, 0xFF000000);
+            context.fill(px, 24, px + PANEL_W, height - 6, 0xA0000000);
+        }
         // 고정 위젯(하단 버튼)과 배경
         super.render(context, mouseX, mouseY, delta);
-        context.drawCenteredTextWithShadow(textRenderer, titleFor(draft), width / 2, 6, 0xFFFFFFFF);
+        context.drawCenteredTextWithShadow(textRenderer, titleFor(draft), boxL + boxW / 2, 6, 0xFFFFFFFF);
+        if (parts.size() >= 2) {
+            int px = panelX();
+            context.drawText(textRenderer, panelTitle(), px + 4, 28, 0xFFFFFFFF, false);
+            if (partPages > 1) {
+                int btnY = height - 6 - ROW_H;
+                int pagerY = btnY - GAP - 16;
+                context.drawCenteredTextWithShadow(textRenderer, Text.literal((partPage + 1) + " / " + partPages),
+                        px + PANEL_W / 2, pagerY + 4, 0xFFB0B0B0);
+            }
+        }
         drawPreview(context);
 
         // 스크롤 박스: 박스 밖에서는 호버 효과가 생기지 않도록 마우스 좌표를 치운다
@@ -1233,17 +1442,11 @@ public class DisplayEditScreen extends Screen {
         context.fill(x1, thumbY, x2, thumbY + thumbH, draggingBar ? 0xFFFFFFFF : 0xFFA0A0A0);
     }
 
-    /** 인벤토리 블록 아이콘(gui display transform: rotation [30, 225, 0])과 같은 등각 시점. */
-    private static final Quaternionf BLOCK_VIEW = new Quaternionf()
-            .rotationXYZ((float) Math.toRadians(30), (float) Math.toRadians(225), 0f);
-    /** 최대 밝기 (블록/하늘 15). GUI 에서는 조명 영향을 받지 않게 한다. */
-    private static final int FULL_LIGHT = 0xF000F0;
-
     /**
-     * 블록 미리보기: BlockState 의 실제 블록 모델을 BlockRenderManager 로 그대로 그린다.
-     * 아이템 모델이 아니므로 문, 묘목, 울타리 같은 블록도 월드에 놓였을 때의 모습으로 보이고,
-     * facing/half 등 속성도 반영된다. 크기(X,Y,Z)도 반영된다.
-     * (1.21.5 에는 26.x 의 BlockModelResolver / DrawContext#entity 가 없어서 DrawContext 의 행렬 + 버텍스 프로바이더로 직접 그린다)
+     * 블록 미리보기 (1.21.5 포팅판): 블록의 아이템 아이콘을 크기(X,Y)에 맞춰 확대해서 보여 준다.
+     * 26.x 판은 블록 디스플레이와 같은 렌더러로 BlockState(속성 포함)를 그렸지만, 그 API 는 1.21.5 에 없어서
+     * facing/half 같은 속성은 미리보기에 반영되지 않는다. (저장되는 block_state 는 그대로 정확하다)
+     * 아이템이 없는 블록(물, 불 등)은 대표색 사각형으로 대체한다.
      */
     private void drawBlockPreview(DrawContext context, int x1, int y1, int x2, int y2) {
         BlockState state = previewState;
@@ -1252,45 +1455,27 @@ public class DisplayEditScreen extends Screen {
         float[] scale = draft.getScale();
         float sx = Math.max(0.05f, Math.abs(scale[0]));
         float sy = Math.max(0.05f, Math.abs(scale[1]));
-        float sz = Math.max(0.05f, Math.abs(scale[2]));
 
         int ry2 = y2 - textRenderer.fontHeight - 4; // 아래 이름 글자 자리 제외
+        float base = 48f;
         float availW = (x2 - x1) - 12f;
         float availH = (ry2 - y1) - 8f;
-
-        // 회전한 상자(sx*sy*sz)가 화면에서 차지하는 폭/높이를 구해 영역에 맞춘다.
-        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
-        float minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
-        Vector3f v = new Vector3f();
-        for (int i = 0; i < 8; i++) {
-            v.set((i & 1) == 0 ? -sx / 2 : sx / 2, (i & 2) == 0 ? -sy / 2 : sy / 2, (i & 4) == 0 ? -sz / 2 : sz / 2);
-            BLOCK_VIEW.transform(v);
-            minX = Math.min(minX, v.x);
-            maxX = Math.max(maxX, v.x);
-            minY = Math.min(minY, v.y);
-            maxY = Math.max(maxY, v.y);
-        }
-        float pxPerUnit = Math.max(0.5f, Math.min(48f, Math.min(availW / (maxX - minX), availH / (maxY - minY))));
+        float fit = Math.max(0.01f, Math.min(1f, Math.min(availW / (base * sx), availH / (base * sy))));
 
         context.enableScissor(x1, y1, x2, y2);
-        if (state.getRenderType() == BlockRenderType.MODEL) {
-            MatrixStack matrices = context.getMatrices();
-            matrices.push();
-            matrices.translate((x1 + x2) / 2f, (y1 + ry2) / 2f, 100f);
-            matrices.scale(pxPerUnit, -pxPerUnit, pxPerUnit); // GUI 의 y 축은 아래로 향하므로 뒤집는다
-            matrices.multiply(BLOCK_VIEW);
-            matrices.scale(sx, sy, sz);
-            // 블록은 0~1 범위이므로, 크기를 적용한 뒤 중심이 원점에 오도록 옮긴다.
-            matrices.translate(-0.5f, -0.5f, -0.5f);
-            DiffuseLighting.enableGuiDepthLighting();
-            context.draw(consumers -> client.getBlockRenderManager()
-                    .renderBlockAsEntity(state, matrices, consumers, FULL_LIGHT, OverlayTexture.DEFAULT_UV));
-            DiffuseLighting.disableGuiDepthLighting();
-            matrices.pop();
+        Item item = state.getBlock().asItem();
+        if (item != Items.AIR) {
+            float k = base * fit / 16f;
+            MatrixStack m = context.getMatrices();
+            m.push();
+            m.translate((x1 + x2) / 2f, (y1 + ry2) / 2f, 0f);
+            m.scale(sx * k, sy * k, 1f);
+            m.translate(-8f, -8f, 0f);
+            context.drawItem(new ItemStack(item), 0, 0);
+            m.pop();
         } else {
-            // 모델이 없는 블록(물, 상자 등)은 대표색 사각형으로 대체
-            int w = Math.max(1, Math.round(pxPerUnit * sx));
-            int h = Math.max(1, Math.round(pxPerUnit * sy));
+            int w = Math.max(1, Math.round(base * fit * sx));
+            int h = Math.max(1, Math.round(base * fit * sy));
             int bx = (x1 + x2) / 2 - w / 2;
             int by = (y1 + ry2) / 2 - h / 2;
             int rgb = state.getBlock().getDefaultMapColor().color & 0xFFFFFF;
