@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
  *  - 텍스처 URL               예) http://textures.minecraft.net/texture/<해시>
  *  - 텍스처 해시(64자리 16진수)
  */
-public final class ProfileText {
+final class ProfileText {
     private ProfileText() {}
 
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9_]{1,16}");
@@ -28,7 +28,7 @@ public final class ProfileText {
     private static final Pattern BASE64 = Pattern.compile("[A-Za-z0-9+/_-]{20,}={0,2}");
 
     /** 입력 문자열을 profile 컴포넌트 값으로 바꾼다. 형식이 올바르지 않으면 empty. (빈 문자열은 호출하는 쪽에서 "제거"로 처리) */
-    public static Optional<NbtElement> parse(String raw) {
+    static Optional<NbtElement> parse(String raw) {
         String s = raw.trim();
         if (s.isEmpty()) return Optional.empty();
 
@@ -68,7 +68,7 @@ public final class ProfileText {
     }
 
     /** profile 컴포넌트 값을 입력칸에 보여 줄 문자열로 바꾼다. (텍스처가 있으면 그 값, 없으면 이름) */
-    public static String format(NbtElement tag) {
+    static String format(NbtElement tag) {
         if (tag == null) return "";
         if (tag instanceof NbtCompound profile) {
             NbtList properties = profile.getListOrEmpty("properties");

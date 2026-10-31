@@ -1,5 +1,6 @@
 package com.dee.client;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.math.Transformation;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -12,6 +13,7 @@ import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.NumericTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.ComponentSerialization;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Display;
@@ -46,6 +48,11 @@ import java.util.UUID;
  * 조작: 1/2/3 = 이동/회전/크기, 좌클릭 드래그 = 조작, 드래그 중 우클릭 = 취소,
  *       엔티티를 바라보고 좌클릭 = 선택, 다중 선택 키(기본 Ctrl, 조작 설정에서 변경) + 좌클릭 = 선택에 추가/제거 (여러 개 선택),
  *       우클릭 / G(에디터 열기 키) = 편집 UI + 파트 목록 (G 는 바라보는 게 없으면 새로 만들기), ESC = 종료
+ *
+ * 수치 입력: 핸들에 십자선을 맞추고 Enter (또는 드래그 중 숫자 입력) -> [x, y, z] 세 칸을 방향키(←/→)/Tab 으로 넘기며 모두 입력.
+ *       이동 = 월드 축 이동량(칸), 회전 = 엔티티 축 회전각(도), 크기 = 축별 배율. Enter 확정, 우클릭 취소.
+ * 정밀 조작: 드래그 중 다중 선택 키(기본 Ctrl)를 누르고 있으면 스냅 (이동 0.5칸 / 회전 15° / 크기 ×0.25), Shift 를 더하면 세밀 스냅 (0.1칸 / 5° / ×0.05).
+ *       드래그 중 숫자(0-9 . -)를 치면 값을 직접 입력 (이동: 칸, 회전: 도, 크기: 배율). Backspace 로 지우고 Enter 로 확정, 우클릭으로 취소.
  *
  * 여러 개를 선택하면(또는 그룹을 선택하면) 선택된 것들의 중심에 기즈모가 하나 놓이고, 하나인 것처럼 이동/회전/크기가 적용된다.
  * 그룹은 DisplayGroups 에 저장되고, 그룹의 엔티티를 하나만 클릭해도 그룹 전체가 선택된다.
@@ -90,6 +97,53 @@ final class GizmoEditor {
     private static final int OUTBOX_PER_TICK = 6;
     /** true 면 드래그 중 회전/크기(transformation)도 클라이언트 엔티티에 실시간으로 반영한다. 문제가 생기면 false 로 */
     private static final boolean LIVE_TRANSFORM_PREVIEW = true;
+    /** 스냅 간격 (일반 / 세밀). 이동은 칸, 회전은 도, 크기는 배율. */
+    private static final double SNAP_MOVE = 0.5, SNAP_MOVE_FINE = 0.1;
+    private static final double SNAP_ROT = 15.0, SNAP_ROT_FINE = 5.0;
+    private static final double SNAP_SCALE = 0.25, SNAP_SCALE_FINE = 0.05;
+    /** 이번 틱에 다중 선택 키(Ctrl) / Shift 가 눌려 있는지. 드래그 중 스냅 여부를 정한다. */
+    private static boolean snapOn;
+    private static boolean snapFine;
+    /**
+     * 드래그 중 숫자 입력에 쓰는 물리 키. 인덱스 규칙은 typeChar() 와 같다:
+     * 0-9, '.', '-', Backspace, Enter, 키패드 0-9, 키패드 '.', '-', Enter.
+     * 키 코드는 버전마다 달라질 수 있어서 숫자를 직접 쓰지 않고 InputConstants 의 상수를 이름으로 찾는다. (없으면 -1 = 사용 안 함)
+     */
+    private static final int[] TYPE_KEYS = buildTypeKeys();
+    private static final boolean[] typedHeld = new boolean[TYPE_KEYS.length];
+
+    private static int keyConst(String... names) {
+        for (String n : names) {
+            try {
+                return InputConstants.class.getField(n).getInt(null);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // 다음 이름을 본다
+            }
+        }
+        return -1;
+    }
+
+    private static int[] buildTypeKeys() {
+        int[] k = new int[30];
+        for (int i = 0; i < 10; i++) k[i] = keyConst("KEY_" + i);
+        k[10] = keyConst("KEY_PERIOD");
+        k[11] = keyConst("KEY_MINUS");
+        k[12] = keyConst("KEY_BACKSPACE");
+        k[13] = keyConst("KEY_RETURN", "KEY_ENTER");
+        for (int i = 0; i < 10; i++) k[14 + i] = keyConst("KEY_NUMPAD" + i, "KEY_KP_" + i);
+        k[24] = keyConst("KEY_NUMPADDECIMAL", "KEY_KP_DECIMAL", "KEY_DECIMAL");
+        k[25] = keyConst("KEY_NUMPADSUBTRACT", "KEY_KP_SUBTRACT", "KEY_SUBTRACT");
+        k[26] = keyConst("KEY_NUMPADENTER", "KEY_KP_ENTER");
+        k[27] = keyConst("KEY_LEFT");
+        k[28] = keyConst("KEY_RIGHT");
+        k[29] = keyConst("KEY_TAB");
+        return k;
+    }
+
+    /** i 번째 입력 키가 지금 눌려 있는지. 상수를 못 찾은 키는 항상 false. */
+    private static boolean typeDown(Minecraft client, int i) {
+        return TYPE_KEYS[i] >= 0 && EditorShortcuts.isDown(client, TYPE_KEYS[i]);
+    }
     /** 드래그 중 클라이언트 엔티티에 마지막으로 반영한 포즈. null 이면 드래그 중이 아니다. */
     private static Pose previewed;
 
@@ -414,6 +468,7 @@ final class GizmoEditor {
             hoverEntity = null;
             EditorShortcuts.releaseMovement();
             EditorShortcuts.sync(client);
+            syncTyped(client);
             return;
         }
 
@@ -466,12 +521,16 @@ final class GizmoEditor {
         View v = View.of(client, player, 1.0f);
 
         if (drag != null) {
+            snapOn = ctrl;                                   // 다중 선택 키를 누르는 동안 스냅
+            snapFine = ctrl && EditorShortcuts.shiftDown(client); // + Shift = 세밀 스냅
+            int typed = pollTyping(client, drag);            // 0: 없음, 1: 수치가 바뀜, 2: Enter
             if (usePressed) {
                 cancelDrag();                 // 드래그 중 우클릭 = 취소
-            } else if (!attackHeld) {
-                finishDrag(client);           // 버튼을 놓으면 확정
-            } else if (!renderedSinceTick) {
-                updateDrag(client, v);        // F1 로 HUD 를 숨기는 등 render 가 안 불린 경우 틱에서 갱신
+            } else {
+                // 수치를 막 입력했거나, F1 로 HUD 를 숨기는 등 render 가 안 불린 경우 틱에서 갱신
+                if (typed != 0 || !renderedSinceTick) updateDrag(client, v);
+                // 수치를 입력 중이면 마우스를 놓아도 끝나지 않고 Enter 로 확정한다
+                if (drag != null && (typed == 2 || (!attackHeld && !drag.typing && !drag.sticky))) finishDrag(client);
             }
             renderedSinceTick = false;
             return;
@@ -485,6 +544,15 @@ final class GizmoEditor {
         }
 
         hoverPart = pickPart(v);
+        // 핸들에 십자선을 맞추고 Enter: 마우스를 누르지 않고 수치를 직접 입력하는 모드를 시작한다
+        if (pollEnterStart(client) && hoverPart != null) {
+            beginDrag(client, v);
+            if (drag != null) {
+                drag.sticky = true;
+                updateDrag(client, v);
+            }
+            return;
+        }
         if (attackPressed && attackHeld) {
             if (ctrl && hovered != null) {
                 toggle(hovered);                  // Ctrl + 클릭: 선택에 추가/제거
@@ -856,6 +924,13 @@ final class GizmoEditor {
         float pitch0;
         double arm;
         String readout = "";
+        /** 키보드로 입력 중인 수치. 비어 있지 않으면(typing) 마우스 대신 이 값을 쓴다. */
+        final StringBuilder[] typed = {new StringBuilder(), new StringBuilder(), new StringBuilder()};
+        /** 지금 입력 중인 칸 (0=x, 1=y, 2=z). 방향키/Tab 으로 바꾼다. */
+        int field;
+        boolean typing;
+        /** Enter 로 시작한 키보드 입력 모드. 마우스를 누르고 있지 않아도 Enter(확정) / 우클릭(취소) 전까지 유지된다. */
+        boolean sticky;
     }
 
     private static void beginDrag(Minecraft client, View v) {
@@ -903,6 +978,8 @@ final class GizmoEditor {
                 }
             }
         }
+        d.field = part == Part.CENTER ? 0 : part.ordinal(); // 잡은 축의 칸부터 입력
+        syncTyped(client); // 드래그 시작 전에 눌려 있던 키가 입력으로 처리되지 않게
         drag = d;
         previewed = d.start.copy();
         if (isMulti()) {
@@ -930,17 +1007,28 @@ final class GizmoEditor {
         boolean multi = isMulti();
         Pose next = d.start.copy();
 
+        boolean kb = d.typing || d.sticky; // 키보드로 입력 중이면 마우스는 무시한다
+        double step = snapStep(d.mode);
+
         switch (d.mode) {
             case MOVE -> {
                 Vec3 delta;
-                if (d.part == Part.CENTER) {
+                if (kb) {
+                    // x, y, z 를 월드 축 기준 이동량(칸)으로 직접 입력
+                    delta = new Vec3(Mth.clamp(typedAt(d, 0, 0.0), -256.0, 256.0),
+                            Mth.clamp(typedAt(d, 1, 0.0), -256.0, 256.0),
+                            Mth.clamp(typedAt(d, 2, 0.0), -256.0, 256.0));
+                } else if (d.part == Part.CENTER) {
                     Vec3 hit = rayPlane(v, d.pivot, d.normal);
                     if (hit == null) return;
                     delta = hit.subtract(d.grab);
+                    if (snapOn) delta = new Vec3(snap(delta.x, step), snap(delta.y, step), snap(delta.z, step));
                 } else {
                     double t = lineParam(v, d.pivot, d.axis);
                     if (Double.isNaN(t)) return;
-                    delta = d.axis.scale(Mth.clamp(t - d.t0, -256.0, 256.0));
+                    double dist = Mth.clamp(t - d.t0, -256.0, 256.0);
+                    if (snapOn) dist = snap(dist, step);
+                    delta = d.axis.scale(dist);
                 }
                 Vec3 np = d.start.pos.add(delta);
                 next.pos = np;
@@ -949,43 +1037,161 @@ final class GizmoEditor {
             }
             case ROTATE -> {
                 Vec3 hit = rayPlane(v, d.pivot, d.axis);
-                if (hit == null) return;
-                double ang = angleOf(hit.subtract(d.pivot), d.axis);
-                d.total += wrap(ang - d.lastAngle);
-                d.lastAngle = ang;
-                double a = d.total;
-                Quaternionf delta = new Quaternionf().rotationAxis((float) a, d.localAxis.x, d.localAxis.y, d.localAxis.z);
+                if (hit != null) {
+                    // 입력 중에도 누적 각도는 계속 따라가 둔다 (지우면 마우스 값으로 자연스럽게 돌아간다)
+                    double ang = angleOf(hit.subtract(d.pivot), d.axis);
+                    d.total += wrap(ang - d.lastAngle);
+                    d.lastAngle = ang;
+                } else if (!kb) {
+                    return;
+                }
+                Quaternionf delta;
+                if (kb) {
+                    // x, y, z 를 엔티티 축 기준 회전각(도)으로 직접 입력
+                    double rx = typedAt(d, 0, 0.0), ry = typedAt(d, 1, 0.0), rz = typedAt(d, 2, 0.0);
+                    delta = new Quaternionf().rotationXYZ((float) Math.toRadians(rx), (float) Math.toRadians(ry), (float) Math.toRadians(rz));
+                    d.readout = String.format(Locale.ROOT, "%.1f°  %.1f°  %.1f°", rx, ry, rz);
+                } else {
+                    double a = d.total;
+                    if (snapOn) a = Math.toRadians(snap(Math.toDegrees(a), step));
+                    delta = new Quaternionf().rotationAxis((float) a, d.localAxis.x, d.localAxis.y, d.localAxis.z);
+                    d.readout = String.format(Locale.ROOT, "%.1f°", Math.toDegrees(a));
+                }
                 delta.mul(d.start.left, next.left).normalize();
                 keepPivot(next, d.start);
-                d.readout = String.format(Locale.ROOT, "%.1f°", Math.toDegrees(a));
             }
             case SCALE -> {
-                double f;
-                if (d.part == Part.CENTER) {
-                    // 시선을 위로 올리면 커지고 내리면 작아진다
-                    f = Math.exp(-(client.player.getXRot() - d.pitch0) * 0.03);
+                double[] fs = {1.0, 1.0, 1.0};
+                if (kb) {
+                    // x, y, z 를 축별 배율로 직접 입력 (다중 선택은 균등 배율만 가능해서 x 값을 모두에 쓴다)
+                    for (int i = 0; i < 3; i++) fs[i] = typedAt(d, i, 1.0);
+                    if (multi) fs[1] = fs[2] = fs[0];
                 } else {
-                    double t = lineParam(v, d.pivot, d.axis);
-                    if (Double.isNaN(t)) return;
-                    f = t / d.t0;
+                    double f;
+                    if (d.part == Part.CENTER) {
+                        // 시선을 위로 올리면 커지고 내리면 작아진다
+                        f = Math.exp(-(client.player.getXRot() - d.pitch0) * 0.03);
+                    } else {
+                        double t = lineParam(v, d.pivot, d.axis);
+                        if (Double.isNaN(t)) return;
+                        f = t / d.t0;
+                    }
+                    if (snapOn) {
+                        f = snap(f, step);
+                        if (f <= 0) f = step;
+                    }
+                    fs[0] = fs[1] = fs[2] = f;
                 }
-                f = Mth.clamp(f, 0.01, 100.0);
+                for (int i = 0; i < 3; i++) fs[i] = Mth.clamp(fs[i], 0.01, 100.0);
                 for (int i = 0; i < 3; i++) {
-                    // 다중 선택의 크기 조절은 어느 핸들이든 균등 배율로 적용한다
-                    if (!multi && d.part != Part.CENTER && d.part.ordinal() != i) continue;
+                    // 마우스 조작: 다중 선택은 어느 핸들이든 균등 배율, 단일 선택은 잡은 축만
+                    if (!kb && !multi && d.part != Part.CENTER && d.part.ordinal() != i) continue;
                     float s = d.start.scale.get(i);
-                    double value = Math.abs(s) * f;
+                    double value = Math.abs(s) * fs[i];
                     next.scale.setComponent(i, (float) (Math.signum(s == 0f ? 1f : s) * value));
                 }
                 keepPivot(next, d.start);
-                d.readout = String.format(Locale.ROOT, "×%.2f", f);
+                d.readout = kb
+                        ? String.format(Locale.ROOT, "×%.2f  ×%.2f  ×%.2f", fs[0], fs[1], fs[2])
+                        : String.format(Locale.ROOT, "×%.2f", fs[0]);
             }
+        }
+        if (snapOn && !kb) {
+            d.readout += String.format(Locale.ROOT, "  [snap %s]", step == Math.rint(step) ? Integer.toString((int) step) : Double.toString(step));
         }
 
         if (!next.sameAs(pose)) {
             pose = next;
             applyPreview(next);
         }
+    }
+
+    // ---- 스냅 / 수치 입력 ----
+
+    private static double snap(double value, double step) {
+        return Math.round(value / step) * step;
+    }
+
+    private static double snapStep(Mode m) {
+        return switch (m) {
+            case MOVE -> snapFine ? SNAP_MOVE_FINE : SNAP_MOVE;
+            case ROTATE -> snapFine ? SNAP_ROT_FINE : SNAP_ROT;
+            case SCALE -> snapFine ? SNAP_SCALE_FINE : SNAP_SCALE;
+        };
+    }
+
+    /** i 번째 칸(0=x, 1=y, 2=z)에 입력한 수치. 비었거나 "-" 처럼 아직 숫자가 아니면 fallback. */
+    private static double typedAt(Drag d, int i, double fallback) {
+        try {
+            return Double.parseDouble(d.typed[i].toString());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /** TYPE_KEYS 의 i 번째 키가 뜻하는 문자. 숫자/'.'/'-', Backspace 는 '\b', Enter 는 '\n'. */
+    private static char typeChar(int i) {
+        if (i == 27) return '<';  // 왼쪽 방향키: 이전 칸
+        if (i == 28) return '>';  // 오른쪽 방향키: 다음 칸
+        if (i == 29) return '\t'; // Tab: 다음 칸
+        if (i < 10) return (char) ('0' + i);
+        if (i == 10 || i == 24) return '.';
+        if (i == 11 || i == 25) return '-';
+        if (i == 12) return '\b';
+        if (i == 13 || i == 26) return '\n';
+        return (char) ('0' + (i - 14)); // 키패드 숫자
+    }
+
+    /** 지금 눌려 있는 키를 "이미 눌려 있음"으로 기록한다. (새로 눌린 순간만 입력으로 보기 위해) */
+    private static void syncTyped(Minecraft client) {
+        for (int i = 0; i < TYPE_KEYS.length; i++) typedHeld[i] = typeDown(client, i);
+    }
+
+    /** 드래그 중이 아닐 때: Enter 가 새로 눌렸는지. (눌림 상태도 함께 갱신한다) */
+    private static boolean pollEnterStart(Minecraft client) {
+        boolean enter = false;
+        for (int i = 0; i < TYPE_KEYS.length; i++) {
+            boolean now = typeDown(client, i);
+            if (now && !typedHeld[i] && typeChar(i) == '\n') enter = true;
+            typedHeld[i] = now;
+        }
+        return enter;
+    }
+
+    /** 드래그 중 새로 눌린 숫자 키를 입력에 반영한다. 0: 변화 없음, 1: 수치가 바뀜, 2: Enter(확정). */
+    private static int pollTyping(Minecraft client, Drag d) {
+        int result = 0;
+        for (int i = 0; i < TYPE_KEYS.length; i++) {
+            boolean now = typeDown(client, i);
+            boolean fresh = now && !typedHeld[i];
+            typedHeld[i] = now;
+            if (!fresh) continue;
+            char c = typeChar(i);
+            if (c == '\n') {
+                result = 2;
+            } else if (c == '<' || c == '>' || c == '\t') {
+                d.field = (d.field + (c == '<' ? 2 : 1)) % 3; // 왼쪽: 이전 칸 / 오른쪽, Tab: 다음 칸
+                if (result == 0) result = 1;
+            } else {
+                StringBuilder b = d.typed[d.field];
+                if (c == '\b') {
+                    if (b.length() > 0) {
+                        b.setLength(b.length() - 1);
+                        if (result == 0) result = 1;
+                    }
+                } else if (b.length() < 10) {
+                    boolean ok = c == '-' ? b.length() == 0
+                            : c == '.' ? b.indexOf(".") < 0
+                              : true;
+                    if (ok) {
+                        b.append(c);
+                        if (result == 0) result = 1;
+                    }
+                }
+            }
+        }
+        d.typing = d.typed[0].length() > 0 || d.typed[1].length() > 0 || d.typed[2].length() > 0;
+        return result;
     }
 
     private static void cancelDrag() {
@@ -1246,7 +1452,8 @@ final class GizmoEditor {
                     keyName("key.attack"), keyName("key.dee.multi_select"), keyName("key.use"),
                     keyName("key.dee.open_editor")), v.w / 2, 42, 0xFFA0A0A0);
             g.centeredText(client.font, Component.translatable("dee.gizmo.help3"), v.w / 2, 54, 0xFFA0A0A0);
-            infoY = 66;
+            g.centeredText(client.font, Component.translatable("dee.gizmo.help4"), v.w / 2, 66, 0xFFA0A0A0);
+            infoY = 78;
         }
         if (isMulti()) {
             DisplayGroups.Group group = selectionGroup();
@@ -1257,6 +1464,53 @@ final class GizmoEditor {
         }
         if (drag != null) {
             g.centeredText(client.font, Component.literal(drag.readout), v.w / 2, v.h / 2 + 14, 0xFFFFE066);
+            if (drag.typing || drag.sticky) {
+                g.centeredText(client.font, typedLine(drag), v.w / 2, v.h / 2 + 26, COLOR_GROUP);
+            } else {
+                g.centeredText(client.font, Component.translatable("dee.gizmo.drag_hint", keyName("key.dee.multi_select")),
+                        v.w / 2, v.h / 2 + 26, 0xFF808080);
+            }
+        }
+        drawHistory(client, g, v);
+    }
+
+    /** 입력 중인 값 표시: "> [ 1.5, 0, 0 ]". 지금 칸은 노란색 + 커서(_), 아직 안 쓴 칸은 기본값을 흐리게. */
+    private static Component typedLine(Drag d) {
+        String dflt = d.mode == Mode.SCALE ? "1" : "0";
+        MutableComponent line = Component.literal("> [ ");
+        for (int i = 0; i < 3; i++) {
+            String t = d.typed[i].toString();
+            boolean active = i == d.field;
+            int color = active ? 0xFFFF55 : t.isEmpty() ? 0xAAAAAA : 0xFFFFFF;
+            String shown = active ? t + "_" : (t.isEmpty() ? dflt : t);
+            line.append(Component.literal(shown).withStyle(style -> style.withColor(color)));
+            if (i < 2) line.append(Component.literal(", "));
+        }
+        return line.append(Component.literal(" ]"));
+    }
+
+    /** 되돌리기/다시 실행 기록 패널. 되돌리기/다시 실행/새 기록 직후 3초 동안, 그리고 도움말(H)을 켠 동안 화면 아래쪽에 보인다. */
+    private static void drawHistory(Minecraft client, GuiGraphicsExtractor g, View v) {
+        boolean recent = System.currentTimeMillis() - EditorHistory.changedAt() < 3000;
+        if (!recent && !showHelp) return;
+        List<Component> redo = EditorHistory.redoLabels(3);
+        List<Component> undo = EditorHistory.undoLabels(4);
+        if (redo.isEmpty() && undo.isEmpty()) return;
+
+        int lineH = 10;
+        int y = v.h - 70 - (redo.size() + undo.size() + 1) * lineH;
+        for (int i = redo.size() - 1; i >= 0; i--) { // 가장 먼 다시 실행부터 위에서 아래로
+            g.centeredText(client.font, Component.translatable("dee.gizmo.history_redo", redo.get(i)), v.w / 2, y, 0xFF707070);
+            y += lineH;
+        }
+        g.centeredText(client.font,
+                Component.translatable("dee.gizmo.history_now", EditorHistory.undoCount(), EditorHistory.redoCount()),
+                v.w / 2, y, 0xFFFFE066);
+        y += lineH;
+        for (int i = 0; i < undo.size(); i++) {
+            g.centeredText(client.font, Component.literal("- ").append(undo.get(i)), v.w / 2, y,
+                    i == 0 ? 0xFFFFFFFF : 0xFFB0B0B0);
+            y += lineH;
         }
     }
 

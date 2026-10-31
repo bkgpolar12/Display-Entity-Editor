@@ -1,6 +1,5 @@
 package com.dee.client;
 
-import net.minecraft.entity.decoration.DisplayEntity;
 import com.dee.DisplayEntityEditor;
 import com.dee.client.DisplayEditPayloads.Apply;
 import com.dee.client.DisplayEditPayloads.OpenRequest;
@@ -12,6 +11,7 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.text.Text;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.Entity;
 
 import java.util.Set;
@@ -89,7 +89,7 @@ public class DisplayEditMod implements ModInitializer {
     /** 권한/거리/타입 검증. 통과하면 text_display 엔티티, 아니면 사유를 알리고 null */
     private static Entity resolve(ServerPlayerEntity player, int entityId) {
         if (!player.isCreative()) return reject(player, "크리에이티브 모드가 아닙니다");
-        // 서버용으로 쓸 때는 OP 권한 검사를 추가하세요. (1.21.5: player.hasPermissionLevel(2))
+        // 서버용으로 쓸 때는 OP 권한 검사를 추가하세요. (1.21.5 는 player.hasPermissionLevel(2) 로 검사)
         Entity entity = player.getWorld().getEntityById(entityId);
         if (entity == null) return reject(player, "엔티티를 찾지 못했습니다 (id " + entityId + ")");
         if (!(entity instanceof DisplayEntity.TextDisplayEntity || entity instanceof DisplayEntity.BlockDisplayEntity
@@ -101,16 +101,16 @@ public class DisplayEditMod implements ModInitializer {
 
     private static Entity reject(ServerPlayerEntity player, String reason) {
         DisplayEntityEditor.LOGGER.warn("편집 요청 거부 ({}): {}", player.getName().getString(), reason);
-        if (DEBUG) player.sendMessage(Text.literal("[DEE] 서버가 거부: " + reason), false);
+        if (DEBUG) player.sendMessage(Text.literal("[DEE] 서버가 거부: " + reason));
         return null;
     }
 
     private static void debug(ServerPlayerEntity player, String message) {
-        if (DEBUG) player.sendMessage(Text.literal("[DEE] 서버: " + message), false);
+        if (DEBUG) player.sendMessage(Text.literal("[DEE] 서버: " + message));
     }
 
     private static void fail(ServerPlayerEntity player, String message, Throwable t) {
         DisplayEntityEditor.LOGGER.error(message, t);
-        player.sendMessage(Text.literal("[DEE] 서버 오류: " + message + " - " + t), false);
+        player.sendMessage(Text.literal("[DEE] 서버 오류: " + message + " - " + t));
     }
 }

@@ -26,14 +26,14 @@ import java.util.UUID;
  *
  * 파일 형식: 한 줄에 그룹 하나. [그룹 UUID] TAB [이름] TAB [멤버 UUID,멤버 UUID,...]
  */
-public final class DisplayGroups {
+final class DisplayGroups {
     private DisplayGroups() {}
 
-    public static final class Group {
-        public final UUID id;
-        public String name;
+    static final class Group {
+        final UUID id;
+        String name;
         /** 멤버 UUID. 넣은 순서가 파트 목록의 순서가 된다. */
-        public final LinkedHashSet<UUID> members = new LinkedHashSet<>();
+        final LinkedHashSet<UUID> members = new LinkedHashSet<>();
 
         Group(UUID id, String name) {
             this.id = id;
@@ -99,19 +99,19 @@ public final class DisplayGroups {
     }
 
     /** 그룹의 내용만 복사해 둔 것. 되돌리기에서 그룹을 그대로 다시 만들 때 쓴다. */
-    public record GroupData(UUID id, String name, List<UUID> members) {}
+    record GroupData(UUID id, String name, List<UUID> members) {}
 
-    public static GroupData dataOf(Group g) {
+    static GroupData dataOf(Group g) {
         return new GroupData(g.id, g.name, new ArrayList<>(g.members));
     }
 
-    public static Group byId(UUID id) {
+    static Group byId(UUID id) {
         ensureLoaded();
         return BY_ID.get(id);
     }
 
     /** 같은 id / 이름 / 멤버로 그룹을 다시 만든다. 멤버가 다른 그룹에 있으면 거기서 뺀다. */
-    public static void restore(GroupData d) {
+    static void restore(GroupData d) {
         ensureLoaded();
         Group existing = BY_ID.remove(d.id());
         if (existing != null) {
@@ -130,7 +130,7 @@ public final class DisplayGroups {
     }
 
     /** 이 엔티티가 속한 그룹. 없으면 null. */
-    public static Group groupOf(UUID member) {
+    static Group groupOf(UUID member) {
         ensureLoaded();
         return BY_MEMBER.get(member);
     }
@@ -139,7 +139,7 @@ public final class DisplayGroups {
      * ids 가 전부 같은 한 그룹의 멤버이고 2개 이상이면 그 그룹을 돌려준다. (선택이 그룹 하나와 같은 상태)
      * 선택은 항상 그룹 단위로 만들어지므로, 일부 멤버가 사라진(삭제/멀리 있음) 경우에도 같은 그룹으로 본다.
      */
-    public static Group exactGroup(Collection<UUID> ids) {
+    static Group exactGroup(Collection<UUID> ids) {
         ensureLoaded();
         if (ids.size() < 2) return null;
         Group g = null;
@@ -153,7 +153,7 @@ public final class DisplayGroups {
     }
 
     /** 새 그룹을 만든다. 이미 다른 그룹에 있던 멤버는 거기서 빠진다. */
-    public static Group create(Collection<UUID> ids, String name) {
+    static Group create(Collection<UUID> ids, String name) {
         ensureLoaded();
         LinkedHashSet<UUID> unique = new LinkedHashSet<>(ids);
         if (unique.size() < 2) return null;
@@ -167,7 +167,7 @@ public final class DisplayGroups {
     }
 
     /** 그룹을 해제한다. (엔티티는 그대로 두고 묶음만 없앤다) */
-    public static void disband(Group g) {
+    static void disband(Group g) {
         ensureLoaded();
         if (g == null) return;
         for (UUID id : g.members) BY_MEMBER.remove(id);
@@ -176,7 +176,7 @@ public final class DisplayGroups {
     }
 
     /** 엔티티를 삭제했을 때 그룹에서도 뺀다. */
-    public static void forget(UUID member) {
+    static void forget(UUID member) {
         ensureLoaded();
         if (BY_MEMBER.containsKey(member)) {
             removeFromGroup(member);
@@ -195,7 +195,7 @@ public final class DisplayGroups {
     }
 
     /** "그룹 1", "그룹 2" ... 중 아직 안 쓰는 이름. (현재 언어로 만든다) */
-    public static String nextName() {
+    static String nextName() {
         ensureLoaded();
         int n = BY_ID.size() + 1;
         while (true) {

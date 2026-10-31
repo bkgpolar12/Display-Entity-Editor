@@ -1,13 +1,16 @@
 package com.dee.client;
 
+import net.minecraft.text.Text;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.nbt.AbstractNbtNumber;
+import net.minecraft.util.Uuids;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtFloat;
+import net.minecraft.nbt.NbtIntArray;
 import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.AbstractNbtNumber;
 import net.minecraft.nbt.NbtString;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.StringNbtReader;
 
 import java.io.IOException;
@@ -23,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -145,39 +149,14 @@ public final class Draft {
         this.creating = creating;
         this.original = nbt.copy();
         this.working = nbt.copy();
-        if (type == Type.TEXT) {
-            // 게임이 저장하는 {..., extra:[b, c], text:"a"} 를 [a, b, c] 목록 형태로 되돌려 보여 준다.
-            // (둘은 같은 뜻이다. 변경 여부 비교가 어긋나지 않도록 original 도 같이 바꾼다)
-            liftTextExtra(this.original);
-            liftTextExtra(this.working);
-        }
         // 서식이 있는 텍스트({translate:..} 등)면 처음부터 고급 모드로 연다
-        NbtElement text = this.working.get("text");
+        NbtElement text = nbt.get("text");
         this.advancedText = type == Type.TEXT && text != null && !(text instanceof NbtString);
 
         // 엔티티의 Tags (/tag 로 다루는 스코어보드 태그)
         NbtList tags = nbt.getListOrEmpty("Tags");
-        for (int i = 0; i < tags.size(); i++) tagRows.add(stringOf(tags.get(i)));
+        for (int i = 0; i < tags.size(); i++) tagRows.add(tags.getString(i, ""));
         sectionOpen[SECTION_TAGS] = !tagRows.isEmpty(); // 태그가 이미 있으면 펼쳐서 보여 준다
-    }
-
-    /**
-     * text 가 {style.., extra:[..], text:"x"} 모양이면 [{style.., text:"x"}, ...extra] 목록으로 바꾼다.
-     * 마인크래프트는 목록 [a, b, c] 를 a 에 extra:[b, c] 를 붙인 한 덩어리로 저장하므로 뜻은 같다.
-     * extra 안에 컴파운드가 아닌 항목이 있으면 건드리지 않는다.
-     */
-    private static void liftTextExtra(NbtCompound compound) {
-        if (!(compound.get("text") instanceof NbtCompound root)) return;
-        if (!(root.get("extra") instanceof NbtList extra) || extra.isEmpty()) return;
-        for (NbtElement e : extra) {
-            if (!(e instanceof NbtCompound)) return;
-        }
-        NbtCompound head = root.copy();
-        head.remove("extra");
-        NbtList list = new NbtList();
-        list.add(head);
-        for (NbtElement e : extra) list.add(e.copy());
-        compound.put("text", list);
     }
 
     /** 새 text_display 를 만들기 위한 초안. (x, y, z) 가 처음 위치가 된다. */
@@ -299,7 +278,7 @@ public final class Draft {
     }
 
     public void setPosAxis(int axis, double value) {
-        pos[axis] = aligning() ? Math.floor(value) : value;
+        pos[axis] = aligning() ? alignedAxis(axis, value) : value;
     }
 
     // ---- 자동 정렬 (block_display 전용) ----
@@ -325,7 +304,39 @@ public final class Draft {
     }
 
     private void snapToBlock() {
-        for (int i = 0; i < 3; i++) pos[i] = Math.floor(pos[i]);
+        for (int i = 0; i < 3; i++) pos[i] = alignedAxis(i, pos[i]);
+    }
+
+    /**
+     * 눈에 보이는 블록의 모서리가 블록 칸(정수)에 오도록 엔티티 위치를 맞춘다.
+     * 보이는 블록의 가장 작은 모서리 = 엔티티 위치 + translation + min(0, scale). (히트박스가 아니라 모습 기준)
+     * translation 0, scale 1 이면 엔티티 위치가 정수일 때와 같다.
+     * 회전(엔티티 방향, left/right_rotation)이 있으면 모서리를 정할 수 없어서 엔티티 위치만 정수로 맞춘다.
+     */
+    private double alignedAxis(int axis, double value) {
+        if (!hasNoRotation()) return Math.floor(value);
+        double offset = translationOf(axis) + Math.min(0f, getScale()[axis]);
+        return Math.floor(value + offset + 1e-6) - offset;
+    }
+
+    private double translationOf(int axis) {
+        NbtList list = working.getCompoundOrEmpty("transformation").getListOrEmpty("translation");
+        return axis < list.size() && list.get(axis) instanceof AbstractNbtNumber n ? n.floatValue() : 0.0;
+    }
+
+    private boolean hasNoRotation() {
+        if (rot[0] != 0f || rot[1] != 0f) return false;
+        NbtCompound t = working.getCompoundOrEmpty("transformation");
+        for (String key : new String[]{"left_rotation", "right_rotation"}) {
+            NbtElement q = t.get(key);
+            if (q == null) continue;
+            if (!(q instanceof NbtList list) || list.size() != 4) return false;
+            float[] identity = {0f, 0f, 0f, 1f};
+            for (int i = 0; i < 4; i++) {
+                if (!(list.get(i) instanceof AbstractNbtNumber n) || n.floatValue() != identity[i]) return false;
+            }
+        }
+        return true;
     }
 
     // ---- 방향 (yaw, pitch) ----
@@ -508,6 +519,15 @@ public final class Draft {
         working.put("transformation", transformation);
     }
 
+    /** 새로 만들기 전용: 지정한 UUID 로 summon 한다. (에디터 모드 진입 시 엔티티를 먼저 만들어 두기 위함) */
+    public String buildSummonCommand(UUID id) {
+        NbtCompound summoned = working.copy();
+        summoned.put("Rotation", floats(rot[0], rot[1]));
+        summoned.put("UUID", new NbtIntArray(Uuids.toIntArray(id)));
+        if (creating && aligning()) snapToBlock(); // 만드는 중에 scale/translation 을 바꿨어도 마지막에 맞춘다
+        return "summon " + type.entityId() + " " + posString() + " " + summoned;
+    }
+
     // ---- 서버로 보낼 명령 ----
 
     /**
@@ -517,6 +537,7 @@ public final class Draft {
     public List<String> buildCommands() {
         // 새로 만드는 경우: 현재 값 전부를 담아 summon 한 번으로 끝낸다
         if (creating) {
+            if (aligning()) snapToBlock(); // 만드는 중에 scale/translation 을 바꿨어도 마지막에 맞춘다
             NbtCompound summoned = working.copy();
             summoned.put("Rotation", floats(rot[0], rot[1]));
             return List.of("summon " + type.entityId() + " " + posString() + " " + summoned);
@@ -558,7 +579,7 @@ public final class Draft {
         // (서버의 기존 태그를 클라이언트가 못 읽는 경우에도 기존 태그를 지우지 않는다)
         NbtList originalList = original.getListOrEmpty("Tags");
         LinkedHashSet<String> before = new LinkedHashSet<>();
-        for (int i = 0; i < originalList.size(); i++) before.add(stringOf(originalList.get(i)));
+        for (int i = 0; i < originalList.size(); i++) before.add(originalList.getString(i, ""));
         LinkedHashSet<String> after = currentTags();
         for (String tag : before) {
             if (!tag.isEmpty() && !after.contains(tag)) commands.add("tag " + uuid + " remove " + tag);
@@ -572,14 +593,6 @@ public final class Draft {
             commands.add("tp " + uuid + " " + posString() + " " + rotString());
         }
         return commands;
-    }
-
-    /** 문자열 태그의 내용. 문자열이 아니면 "". (NbtElement.asString() 의 반환형이 버전마다 달라서 컴파운드를 거친다) */
-    static String stringOf(NbtElement element) {
-        if (element == null) return "";
-        NbtCompound wrapper = new NbtCompound();
-        wrapper.put("v", element);
-        return wrapper.getString("v", "");
     }
 
     // ---- SNBT 파싱 ----

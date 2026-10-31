@@ -2,14 +2,14 @@ package com.dee.client;
 
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
+import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.util.Identifier;
 
 /**
- * 클라이언트/서버가 함께 쓰는 패킷 정의. net.minecraft.client.* 는 절대 import 하지 않는다.
- * 1.21.5: CustomPacketPayload/StreamCodec(Mojang) -> CustomPayload/PacketCodec(Yarn)
+ * 클라이언트/서버가 함께 쓰는 패킷 정의.
+ * net.minecraft.client.* 는 절대 import 하지 않는다.
  */
 public final class DisplayEditPayloads {
     private DisplayEditPayloads() {}

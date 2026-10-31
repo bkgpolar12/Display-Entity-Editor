@@ -1,23 +1,22 @@
 package com.dee.client;
 
-import net.minecraft.block.Block;
+import net.minecraft.client.render.RenderLayer;
+import net.minecraft.item.ItemGroups;
+import net.minecraft.item.ItemGroup;
+import org.lwjgl.glfw.GLFW;
+import net.minecraft.util.Formatting;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.render.RenderLayer;
+import net.minecraft.registry.Registries;
+import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import net.minecraft.item.Item;
-import net.minecraft.item.ItemGroup;
-import net.minecraft.item.ItemGroups;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.block.Block;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -25,13 +24,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
- * 크리에이티브 인벤토리(CreativeInventoryScreen)와 같은 모양/배치의 "고르기" 화면.
- * 바닐라의 탭(ItemGroups), 배경/탭/스크롤러 텍스처, 9x5 슬롯 격자, 검색 탭을 그대로 쓴다.
+ * 크리에이티브 인벤토리(CreativeModeInventoryScreen)와 같은 모양/배치의 "고르기" 화면.
+ * 바닐라의 탭(CreativeModeTabs), 배경/탭/스크롤러 텍스처, 9x5 슬롯 격자, 검색 탭을 그대로 쓴다.
  * 다만 아이템을 집어 드는 대신, 슬롯을 누르면 그 항목의 ID 를 onPick 으로 넘기고 parent 화면으로 돌아간다.
  *
  * - BLOCK 모드: 블록이 되는 항목만 보여 준다. (탭에 없는 블록, 아이템이 없는 물·불 같은 블록은 검색 탭에서 검색하면 나온다)
@@ -45,7 +45,7 @@ public class ItemPickerScreen extends Screen {
     /** stack 이 비어 있으면(아이템이 없는 블록) color 로 대신 그린다. */
     private record Entry(Identifier id, Text name, ItemStack stack, int color, String searchKey) {}
 
-    // ---- 바닐라 CreativeInventoryScreen 과 같은 상수 ----
+    // ---- 바닐라 CreativeModeInventoryScreen 과 같은 상수 ----
     private static final Identifier SCROLLER_SPRITE = Identifier.ofVanilla("container/creative_inventory/scroller");
     private static final Identifier SCROLLER_DISABLED_SPRITE = Identifier.ofVanilla("container/creative_inventory/scroller_disabled");
     private static final Identifier[] UNSELECTED_TOP_TABS = tabSprites("top_unselected");
@@ -105,10 +105,9 @@ public class ItemPickerScreen extends Screen {
     /** 탭 내용을 (필요하면) 다시 만들고, 탭마다 고를 수 있는 항목 목록을 만든다. 화면을 처음 열 때 한 번만 한다. */
     private void buildEntries() {
         ClientPlayerEntity player = client.player;
-        // 바닐라 크리에이티브 화면이 열릴 때와 같은 호출. (탭 내용을 현재 월드/기능 플래그 기준으로 다시 만든다)
-        // 이 화면은 바닐라 검색 트리를 쓰지 않고 자체 검색을 하므로, 검색 트리 갱신은 하지 않는다.
+        // 바닐라 크리에이티브 화면이 열릴 때와 같은 호출. (탭 내용이 아직 안 만들어졌으면 만든다)
         ItemGroups.updateDisplayContext(player.networkHandler.getEnabledFeatures(),
-                player.isCreativeLevelTwoOp(), client.world.getRegistryManager());
+                player.isCreativeLevelTwoOp(), player.getWorld().getRegistryManager());
 
         byTab.clear();
         shownTabs.clear();
@@ -233,8 +232,7 @@ public class ItemPickerScreen extends Screen {
             }
         }
         if (chosen == null) {
-            ItemGroup fallback = ItemGroups.getDefaultTab();
-            chosen = byTab.containsKey(fallback) ? fallback : shownTabs.get(0);
+            chosen = shownTabs.get(0);
         }
         selectedTab = chosen;
         view = byTab.get(chosen);
@@ -300,15 +298,10 @@ public class ItemPickerScreen extends Screen {
 
         if (q.startsWith("#")) {
             // #태그 검색: 바닐라와 같이 태그 ID 에 검색어가 들어 있는 태그들 중 하나에 속하는 항목
-            List<TagKey<Item>> tags = matchingTags(q.substring(1).trim());
+            Predicate<Identifier> matcher = tagMatcher(q.substring(1).trim());
             for (Entry e : pool) {
                 if (e.stack().isEmpty()) continue;
-                for (TagKey<Item> tag : tags) {
-                    if (e.stack().isIn(tag)) {
-                        out.add(e);
-                        break;
-                    }
-                }
+                if (e.stack().getRegistryEntry().streamTags().anyMatch(tag -> matcher.test(tag.id()))) out.add(e);
             }
             return out;
         }
@@ -327,26 +320,16 @@ public class ItemPickerScreen extends Screen {
         return out;
     }
 
-    private static List<TagKey<Item>> matchingTags(String term) {
+    private static Predicate<Identifier> tagMatcher(String term) {
         int colon = term.indexOf(':');
-        Predicate<Identifier> matcher;
-        if (colon == -1) {
-            matcher = id -> id.getPath().contains(term);
-        } else {
-            String namespace = term.substring(0, colon).trim();
-            String path = term.substring(colon + 1).trim();
-            matcher = id -> id.getNamespace().contains(namespace) && id.getPath().contains(path);
-        }
-        List<TagKey<Item>> out = new ArrayList<>();
-        Registries.ITEM.streamTags().forEach(named -> {
-            TagKey<Item> key = named.getTag();
-            if (matcher.test(key.id())) out.add(key);
-        });
-        return out;
+        if (colon == -1) return id -> id.getPath().contains(term);
+        String namespace = term.substring(0, colon).trim();
+        String path = term.substring(colon + 1).trim();
+        return id -> id.getNamespace().contains(namespace) && id.getPath().contains(path);
     }
 
     // ------------------------------------------------------------------
-    // 스크롤 (바닐라 CreativeInventoryScreen.CreativeScreenHandler 와 같은 계산)
+    // 스크롤 (바닐라 ItemPickerMenu 와 같은 계산)
     // ------------------------------------------------------------------
 
     private int rowCount() {
@@ -461,14 +444,14 @@ public class ItemPickerScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (scrolling) {
             int top = topPos + 18;
             int bottom = top + 112;
             scrollOffs = clamp01(((float) mouseY - top - 7.5F) / (bottom - top - 15.0F));
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
     @Override
@@ -486,34 +469,34 @@ public class ItemPickerScreen extends Screen {
     // ------------------------------------------------------------------
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta); // 배경 + [취소] 버튼
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 2, 0xFFFFFFFF);
+    public void render(DrawContext graphics, int mouseX, int mouseY, float delta) {
+        super.render(graphics, mouseX, mouseY, delta); // 배경 + [취소] 버튼
+        graphics.drawCenteredTextWithShadow(textRenderer, title, width / 2, 2, 0xFFFFFFFF);
 
         // 선택 안 된 탭 -> 본체 -> 스크롤러 -> 검색칸 -> 선택된 탭 순서는 바닐라와 같다
         for (ItemGroup tab : shownTabs) {
-            if (tab != selectedTab) drawTab(context, mouseX, mouseY, tab);
+            if (tab != selectedTab) drawTab(graphics, mouseX, mouseY, tab);
         }
-        context.drawTexture(RenderLayer::getGuiTextured, selectedTab.getTexture(),
+        graphics.drawTexture(RenderLayer::getGuiTextured, selectedTab.getTexture(),
                 leftPos, topPos, 0.0F, 0.0F, IMAGE_W, IMAGE_H, 256, 256);
 
-        searchBox.render(context, mouseX, mouseY, delta);
+        searchBox.render(graphics, mouseX, mouseY, delta);
         if (selectedTab.hasScrollbar()) {
             Identifier sprite = canScroll() ? SCROLLER_SPRITE : SCROLLER_DISABLED_SPRITE;
-            context.drawGuiTexture(RenderLayer::getGuiTextured, sprite,
+            graphics.drawGuiTexture(RenderLayer::getGuiTextured, sprite,
                     leftPos + 175, topPos + 18 + (int) ((112 - 17) * scrollOffs), 12, 15);
         }
-        drawTab(context, mouseX, mouseY, selectedTab);
+        drawTab(graphics, mouseX, mouseY, selectedTab);
         if (selectedTab.shouldRenderName()) {
-            context.drawText(textRenderer, selectedTab.getDisplayName(), leftPos + 8, topPos + 6, -12566464, false);
+            graphics.drawText(textRenderer, selectedTab.getDisplayName(), leftPos + 8, topPos + 6, -12566464, false);
         }
 
-        drawSlots(context, mouseX, mouseY);
+        drawSlots(graphics, mouseX, mouseY);
     }
 
-    private void drawSlots(DrawContext context, int mouseX, int mouseY) {
+    private void drawSlots(DrawContext graphics, int mouseX, int mouseY) {
         if (view.isEmpty()) {
-            context.drawCenteredTextWithShadow(textRenderer, Text.translatable("dee.picker.empty"),
+            graphics.drawCenteredTextWithShadow(textRenderer, Text.translatable("dee.picker.empty"),
                     leftPos + 9 + NUM_COLS * 9, topPos + 18 + NUM_ROWS * 9 - textRenderer.fontHeight / 2, 0xFF404040);
         }
 
@@ -528,46 +511,46 @@ public class ItemPickerScreen extends Screen {
 
             if (e.id().equals(currentId)) {
                 // 지금 입력칸에 있는 항목: 노란 테두리
-                context.fill(x - 1, y - 1, x + 17, y, COLOR_CURRENT);
-                context.fill(x - 1, y + 16, x + 17, y + 17, COLOR_CURRENT);
-                context.fill(x - 1, y, x, y + 16, COLOR_CURRENT);
-                context.fill(x + 16, y, x + 17, y + 16, COLOR_CURRENT);
+                graphics.fill(x - 1, y - 1, x + 17, y, COLOR_CURRENT);
+                graphics.fill(x - 1, y + 16, x + 17, y + 17, COLOR_CURRENT);
+                graphics.fill(x - 1, y, x, y + 16, COLOR_CURRENT);
+                graphics.fill(x + 16, y, x + 17, y + 16, COLOR_CURRENT);
             }
             if (!e.stack().isEmpty()) {
-                context.drawItem(e.stack(), x, y);
+                graphics.drawItem(e.stack(), x, y);
             } else {
                 // 아이템이 없는 블록(물, 불 등)은 대표색 사각형
                 int rgb = e.color() != 0 ? e.color() : 0x808080;
-                context.fill(x + 1, y + 1, x + 15, y + 15, 0xFF000000);
-                context.fill(x + 2, y + 2, x + 14, y + 14, 0xFF000000 | rgb);
+                graphics.fill(x + 1, y + 1, x + 15, y + 15, 0xFF000000);
+                graphics.fill(x + 2, y + 2, x + 14, y + 14, 0xFF000000 | rgb);
             }
             if (index == hovered) {
-                context.fill(x, y, x + 16, y + 16, 0x80FFFFFF);
+                graphics.fill(x, y, x + 16, y + 16, 0x80FFFFFF);
             }
         }
 
         if (hovered >= 0) {
             Entry e = view.get(hovered);
             if (mode == Mode.ITEM && !e.stack().isEmpty()) {
-                context.drawItemTooltip(textRenderer, e.stack(), mouseX, mouseY);
+                graphics.drawItemTooltip(textRenderer, e.stack(), mouseX, mouseY);
             } else {
                 // 블록 모드: 고르게 될 블록의 이름과 ID (아이템 이름과 다를 수 있어 아이템 툴팁을 쓰지 않는다)
-                context.drawTooltip(textRenderer,
+                graphics.drawTooltip(textRenderer,
                         List.of(e.name(), Text.literal(e.id().toString()).formatted(Formatting.GRAY)),
-                        mouseX, mouseY);
+                        Optional.empty(), mouseX, mouseY);
             }
             return;
         }
 
         for (ItemGroup tab : shownTabs) {
             if (isHovering(leftPos + tabX(tab) + 3, topPos + tabY(tab) + 3, 21, 27, mouseX, mouseY)) {
-                context.drawTooltip(textRenderer, tab.getDisplayName(), mouseX, mouseY);
+                graphics.drawTooltip(textRenderer, tab.getDisplayName(), mouseX, mouseY);
                 break;
             }
         }
     }
 
-    private void drawTab(DrawContext context, int mouseX, int mouseY, ItemGroup tab) {
+    private void drawTab(DrawContext graphics, int mouseX, int mouseY, ItemGroup tab) {
         boolean selected = tab == selectedTab;
         boolean top = tab.getRow() == ItemGroup.Row.TOP;
         int x = leftPos + tabX(tab);
@@ -575,8 +558,8 @@ public class ItemPickerScreen extends Screen {
         Identifier[] sprites = top
                 ? (selected ? SELECTED_TOP_TABS : UNSELECTED_TOP_TABS)
                 : (selected ? SELECTED_BOTTOM_TABS : UNSELECTED_BOTTOM_TABS);
-        context.drawGuiTexture(RenderLayer::getGuiTextured,
+        graphics.drawGuiTexture(RenderLayer::getGuiTextured,
                 sprites[Math.max(0, Math.min(tab.getColumn(), sprites.length - 1))], x, y, 26, 32);
-        context.drawItem(tab.getIcon(), x + 13 - 8, y + 16 - 8 + (top ? 1 : -1));
+        graphics.drawItem(tab.getIcon(), x + 13 - 8, y + 16 - 8 + (top ? 1 : -1));
     }
 }

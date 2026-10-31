@@ -14,11 +14,11 @@ import java.util.Optional;
  * "oak_stairs[facing=east]" 같은 사람이 쓰는 문자열 사이의 변환 도우미.
  * (client/server 공용, net.minecraft.client.* import 금지)
  */
-public final class BlockStateText {
+final class BlockStateText {
     private BlockStateText() {}
 
     /** "stone" / "minecraft:stone" 처럼 이름만 받아 블록을 찾는다. 없으면 empty. */
-    public static Optional<Block> findBlock(String name) {
+    static Optional<Block> findBlock(String name) {
         String trimmed = name.trim();
         if (trimmed.isEmpty()) return Optional.empty();
         Identifier id = Identifier.tryParse(trimmed.contains(":") ? trimmed : "minecraft:" + trimmed);
@@ -27,7 +27,7 @@ public final class BlockStateText {
     }
 
     /** block_state NBT 에서 블록을 꺼낸다. */
-    public static Optional<Block> blockOf(NbtElement tag) {
+    static Optional<Block> blockOf(NbtElement tag) {
         if (!(tag instanceof NbtCompound state)) return Optional.empty();
         return findBlock(state.getString("Name", ""));
     }
@@ -36,7 +36,7 @@ public final class BlockStateText {
      * "oak_stairs[facing=east,half=top]" 를 block_state NBT 로 바꾼다.
      * 블록이 없거나, 그 블록에 없는 속성/값이면 empty. (속성을 안 쓰면 블록 기본값이 적용된다)
      */
-    public static Optional<NbtCompound> parse(String text) {
+    static Optional<NbtCompound> parse(String text) {
         String s = text.trim();
         if (s.isEmpty()) return Optional.empty();
 
@@ -74,7 +74,7 @@ public final class BlockStateText {
     }
 
     /** block_state NBT 를 입력칸에 보여 줄 문자열로 바꾼다. (minecraft: 는 생략) */
-    public static String format(NbtElement tag) {
+    static String format(NbtElement tag) {
         if (!(tag instanceof NbtCompound state)) return "";
         String name = state.getString("Name", "");
         if (name.startsWith("minecraft:")) name = name.substring("minecraft:".length());

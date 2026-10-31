@@ -1,18 +1,21 @@
 package com.dee.client;
 
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.item.ItemGroups;
-import net.minecraft.item.ItemGroup;
 import org.lwjgl.glfw.GLFW;
 import net.minecraft.util.Formatting;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.render.RenderLayer;
+import org.lwjgl.glfw.GLFW;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.search.SearchManager;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.registry.tag.TagKey;
+import net.minecraft.item.ItemGroup;
+import net.minecraft.item.ItemGroups;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -31,7 +34,7 @@ import java.util.function.Predicate;
 
 /**
  * 크리에이티브 인벤토리(CreativeModeInventoryScreen)와 같은 모양/배치의 "고르기" 화면.
- * 바닐라의 탭(CreativeModeTabs), 배경/탭/스크롤러 텍스처, 9x5 슬롯 격자, 검색 탭을 그대로 쓴다.
+ * 바닐라의 탭(ItemGroups), 배경/탭/스크롤러 텍스처, 9x5 슬롯 격자, 검색 탭을 그대로 쓴다.
  * 다만 아이템을 집어 드는 대신, 슬롯을 누르면 그 항목의 ID 를 onPick 으로 넘기고 parent 화면으로 돌아간다.
  *
  * - BLOCK 모드: 블록이 되는 항목만 보여 준다. (탭에 없는 블록, 아이템이 없는 물·불 같은 블록은 검색 탭에서 검색하면 나온다)
@@ -105,9 +108,15 @@ public class ItemPickerScreen extends Screen {
     /** 탭 내용을 (필요하면) 다시 만들고, 탭마다 고를 수 있는 항목 목록을 만든다. 화면을 처음 열 때 한 번만 한다. */
     private void buildEntries() {
         ClientPlayerEntity player = client.player;
-        // 바닐라 크리에이티브 화면이 열릴 때와 같은 호출. (탭 내용이 아직 안 만들어졌으면 만든다)
-        ItemGroups.updateDisplayContext(player.networkHandler.getEnabledFeatures(),
-                player.isCreativeLevelTwoOp(), player.getWorld().getRegistryManager());
+        var holders = player.getWorld().getRegistryManager();
+        // 바닐라 화면이 열릴 때와 같은 호출. 탭 내용이 바뀌었으면 바닐라 검색 트리도 같이 갱신해 둔다.
+        if (ItemGroups.updateDisplayContext(player.networkHandler.getEnabledFeatures(),
+                player.isCreativeLevelTwoOp(), holders)) {
+            SearchManager trees = player.networkHandler.getSearchManager();
+            List<ItemStack> items = List.copyOf(ItemGroups.getSearchGroup().getDisplayStacks());
+            trees.addItemTooltipReloader(holders, items);
+            trees.addItemTagReloader(items);
+        }
 
         byTab.clear();
         shownTabs.clear();
@@ -232,7 +241,8 @@ public class ItemPickerScreen extends Screen {
             }
         }
         if (chosen == null) {
-            chosen = shownTabs.get(0);
+            ItemGroup fallback = ItemGroups.getDefaultTab();
+            chosen = byTab.containsKey(fallback) ? fallback : shownTabs.get(0);
         }
         selectedTab = chosen;
         view = byTab.get(chosen);
@@ -298,10 +308,15 @@ public class ItemPickerScreen extends Screen {
 
         if (q.startsWith("#")) {
             // #태그 검색: 바닐라와 같이 태그 ID 에 검색어가 들어 있는 태그들 중 하나에 속하는 항목
-            Predicate<Identifier> matcher = tagMatcher(q.substring(1).trim());
+            List<TagKey<Item>> tags = matchingTags(q.substring(1).trim());
             for (Entry e : pool) {
                 if (e.stack().isEmpty()) continue;
-                if (e.stack().getRegistryEntry().streamTags().anyMatch(tag -> matcher.test(tag.id()))) out.add(e);
+                for (TagKey<Item> tag : tags) {
+                    if (e.stack().isIn(tag)) {
+                        out.add(e);
+                        break;
+                    }
+                }
             }
             return out;
         }
@@ -320,12 +335,21 @@ public class ItemPickerScreen extends Screen {
         return out;
     }
 
-    private static Predicate<Identifier> tagMatcher(String term) {
+    private static List<TagKey<Item>> matchingTags(String term) {
         int colon = term.indexOf(':');
-        if (colon == -1) return id -> id.getPath().contains(term);
-        String namespace = term.substring(0, colon).trim();
-        String path = term.substring(colon + 1).trim();
-        return id -> id.getNamespace().contains(namespace) && id.getPath().contains(path);
+        Predicate<Identifier> matcher;
+        if (colon == -1) {
+            matcher = id -> id.getPath().contains(term);
+        } else {
+            String namespace = term.substring(0, colon).trim();
+            String path = term.substring(colon + 1).trim();
+            matcher = id -> id.getNamespace().contains(namespace) && id.getPath().contains(path);
+        }
+        List<TagKey<Item>> out = new ArrayList<>();
+        Registries.ITEM.streamTagKeys().forEach(key -> {
+            if (matcher.test(key.id())) out.add(key);
+        });
+        return out;
     }
 
     // ------------------------------------------------------------------

@@ -11,6 +11,7 @@ import java.lang.reflect.Modifier;
 /**
  * 에디터 모드의 편집 단축키. 다른 에디터와 같은 관습이라 Ctrl / Shift 와 글자를 물리 키로 직접 읽는다.
  *   Ctrl+Z 되돌리기 · Ctrl+Shift+Z / Ctrl+Y 다시 실행 · Ctrl+X 잘라내기 · Ctrl+C 복사 · Ctrl+V 붙여넣기
+ *   (Ctrl+Z / Ctrl+Y 는 누르고 있으면 여러 단계를 연달아 실행한다)
  *   Ctrl+D 복제 · Ctrl+A 모두 선택 · Ctrl+G 그룹 · Ctrl+Shift+G 그룹 해제 · Delete 삭제
  */
 final class EditorShortcuts {
@@ -23,6 +24,10 @@ final class EditorShortcuts {
     };
     /** 지난 틱에 눌려 있었는지. 새로 눌린 순간만 한 번 처리하기 위해 기억한다. */
     private static final boolean[] held = new boolean[KEYS.length];
+    /** 계속 눌러 온 틱 수. Ctrl+Z / Ctrl+Y 를 누르고 있으면 여러 단계를 연달아 되돌리거나 다시 실행하는 데 쓴다. */
+    private static final int[] holdTicks = new int[KEYS.length];
+    private static final int REPEAT_DELAY = 8;  // 0.4초 뒤부터
+    private static final int REPEAT_EVERY = 2;  // 0.1초마다 한 단계
 
     private static Method isKeyDown;
     private static int isKeyDownShape; // 1: (int key)  2: (Window, int key)  3: (long handle, int key)
@@ -141,7 +146,10 @@ final class EditorShortcuts {
      * 그때 누르고 있던 키가 나중에 "새로 눌림"으로 잘못 처리되지 않는다.
      */
     static void sync(Minecraft client) {
-        for (int i = 0; i < KEYS.length; i++) held[i] = isDown(client, KEYS[i]);
+        for (int i = 0; i < KEYS.length; i++) {
+            held[i] = isDown(client, KEYS[i]);
+            holdTicks[i] = 0;
+        }
     }
 
     /** 이번 틱에 새로 눌린 단축키를 처리한다. */
@@ -151,8 +159,17 @@ final class EditorShortcuts {
         for (int i = 0; i < KEYS.length; i++) {
             boolean now = isDown(client, KEYS[i]);
             boolean fresh = now && !held[i];
+            boolean repeat = false;
+            if (now && held[i]) {
+                holdTicks[i]++;
+                int k = KEYS[i];
+                repeat = (k == InputConstants.KEY_Z || k == InputConstants.KEY_Y)
+                        && holdTicks[i] >= REPEAT_DELAY && (holdTicks[i] - REPEAT_DELAY) % REPEAT_EVERY == 0;
+            } else {
+                holdTicks[i] = 0;
+            }
             held[i] = now;
-            if (!fresh) continue;
+            if (!fresh && !repeat) continue;
 
             int key = KEYS[i];
             if (key == InputConstants.KEY_DELETE) {

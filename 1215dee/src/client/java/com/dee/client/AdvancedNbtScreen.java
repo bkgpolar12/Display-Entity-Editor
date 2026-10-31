@@ -131,7 +131,6 @@ public class AdvancedNbtScreen extends Screen {
     /** 닫으면 메인 화면으로 돌아간다. (새로 만들어야 입력칸에 바뀐 값이 반영된다) */
     @Override
     public void close() {
-        // 26.2 부터 MinecraftClient#setScreen 은 Gui#setScreen 으로 옮겨졌다.
         client.setScreen(new DisplayEditScreen(draft));
     }
 

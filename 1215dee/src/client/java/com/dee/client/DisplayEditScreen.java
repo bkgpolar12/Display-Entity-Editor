@@ -2,6 +2,7 @@ package com.dee.client;
 
 import net.minecraft.item.Item;
 import net.minecraft.block.BlockRenderType;
+import net.minecraft.client.render.DiffuseLighting;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.OverlayTexture;
 import org.joml.Quaternionf;
@@ -1494,22 +1495,28 @@ public class DisplayEditScreen extends Screen {
 
         context.enableScissor(x1, y1, x2, y2);
         if (state.getRenderType() != BlockRenderType.INVISIBLE) {
+            // 26.x 의 context.entity(...) 와 같은 방식: 바닐라가 인벤토리에서 엔티티를 그릴 때(InventoryScreen#drawEntity)의 순서.
+            //   이동(영역 중심) -> 확대(Z 반전) -> 시점 회전 -> (엔티티 쪽) 크기/중심 보정 -> 엔티티용 GUI 조명 -> 그리기 -> 아이템용 조명 복구
+            // 엔티티가 그려지는 영역은 이름 글자를 뺀 (x1, y1, x2, ry2) 이다.
+            context.enableScissor(x1, y1, x2, ry2);
             context.draw(); // 앞서 그린 배경을 먼저 내보낸다
             MatrixStack m = context.getMatrices();
             m.push();
-            // 엔티티 GUI 렌더링과 같은 변환: 중심으로 옮기고 → 확대(Z 반전) → 시점 회전
-            m.translate((x1 + x2) / 2f, (y1 + ry2) / 2f, 100f);
+            m.translate((x1 + x2) / 2f, (y1 + ry2) / 2f, 50f);
             m.scale(pxPerUnit, pxPerUnit, -pxPerUnit);
             m.multiply(BLOCK_VIEW);
-            // 블록은 0~1 범위이므로, 크기를 적용한 뒤 중심이 원점에 오도록 옮긴다.
+            // 디스플레이 엔티티의 transformation 과 같다: 크기를 적용하고, 블록(0~1)의 중심이 원점에 오도록 옮긴다.
             m.scale(sx, sy, sz);
             m.translate(-0.5f, -0.5f, -0.5f);
 
-            // 1.21.5 의 DrawContext 에는 getVertexConsumers() 가 없다.
-            // draw(Consumer<VertexConsumerProvider>) 가 내부 버퍼를 넘겨 주고 그린 뒤 알아서 내보낸다.
+            // 엔티티용 GUI 조명. (기본 GUI 조명은 아이템 아이콘용이라 면의 밝기가 달라진다)
+            DiffuseLighting.enableGuiShaderLighting();
+            // draw(Consumer<VertexConsumerProvider>) 가 내부 버퍼를 넘겨 주고, 그린 뒤 알아서 내보낸다.
             context.draw(consumers -> client.getBlockRenderManager().renderBlockAsEntity(
                     state, m, consumers, LightmapTextureManager.MAX_LIGHT_COORDINATE, OverlayTexture.DEFAULT_UV));
             m.pop();
+            DiffuseLighting.enableGuiDepthLighting(); // 다른 GUI(아이템 아이콘 등)가 쓰는 조명으로 되돌린다
+            context.disableScissor();
         } else {
             // 모델이 없는 블록(물 등)은 대표색 사각형으로 대체
             int w = Math.max(1, Math.round(pxPerUnit * sx));

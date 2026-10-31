@@ -1,6 +1,5 @@
 package com.dee.client;
 
-import net.minecraft.text.Text;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.util.Uuids;
@@ -208,11 +207,7 @@ public final class Draft {
         advancedText = false;
 
         switch (newType) {
-            case BLOCK -> {
-                NbtCompound state = new NbtCompound();
-                state.putString("Name", "minecraft:stone");
-                working.put("block_state", state);
-            }
+            case BLOCK -> working.put("block_state", NbtString.of("minecraft:stone"));
             case ITEM -> {
                 NbtCompound item = new NbtCompound();
                 item.putString("id", "minecraft:stone");

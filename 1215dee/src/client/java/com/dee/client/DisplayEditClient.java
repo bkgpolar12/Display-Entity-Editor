@@ -1,18 +1,18 @@
 package com.dee.client;
 
-import net.minecraft.entity.decoration.DisplayEntity;
-import org.lwjgl.glfw.GLFW;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.minecraft.client.util.InputUtil;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.HudLayerRegistrationCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.IdentifiedLayer;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
+import org.lwjgl.glfw.GLFW;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.nbt.NbtCompound;
@@ -26,7 +26,11 @@ import net.minecraft.util.Identifier;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.OrderedText;
 import net.minecraft.util.ActionResult;
+import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.decoration.DisplayEntity.BlockDisplayEntity;
+import net.minecraft.entity.decoration.DisplayEntity.ItemDisplayEntity;
+import net.minecraft.entity.decoration.DisplayEntity.TextDisplayEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.world.World;
 import net.minecraft.util.math.Box;
@@ -97,8 +101,8 @@ public class DisplayEditClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // 1.21.5: 키 카테고리는 번역 키 문자열이다. (lang 파일의 key.category.dee.main)
-        final String category = "key.category.dee.main";
+        // 카테고리 번역 키: key.category.dee.main (lang 파일 참고). 1.21.5 의 카테고리는 번역 키 문자열이다.
+        String category = "key.category.dee.main";
 
         OPEN_EDITOR = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.dee.open_editor",
@@ -119,9 +123,11 @@ public class DisplayEditClient implements ClientModInitializer {
         ClientTickEvents.START_CLIENT_TICK.register(this::onTick);
 
         // 기즈모는 HUD 에 그린다. (월드 렌더 API 는 버전마다 크게 바뀌어서 HUD API 만 사용)
-        // 1.21.5 에는 HudElementRegistry 가 없어서 HudRenderCallback 을 쓴다.
-        HudRenderCallback.EVENT.register((drawContext, tickCounter) ->
-                GizmoEditor.render(MinecraftClient.getInstance(), drawContext, tickCounter.getTickProgress(false)));
+        HudLayerRegistrationCallback.EVENT.register(layeredDrawer -> layeredDrawer.attachLayerBefore(
+                IdentifiedLayer.CHAT,
+                Identifier.of(DisplayEditMod.MOD_ID, "gizmo"),
+                (graphics, tickCounter) -> GizmoEditor.render(
+                        MinecraftClient.getInstance(), graphics, tickCounter.getTickProgress(false))));
 
         // 에디터 모드에서는 모든 블록 상호작용 차단. (크리에이티브에서 좌클릭을 누르고 있으면 블록이 연속으로
         // 부서지는데, 그것도 attack 콜백이 막는다.) 클릭 키 자체는 GizmoEditor.tick 이 소비한다.
@@ -250,8 +256,8 @@ public class DisplayEditClient implements ClientModInitializer {
     static void openEditorScreen(MinecraftClient client, DisplayEntity target) {
         NbtCompound nbt = EntityNbt.save(target);
         mergeServerTags(client, target, nbt);
-        Draft.Type type = target instanceof DisplayEntity.BlockDisplayEntity ? Draft.Type.BLOCK
-                : target instanceof DisplayEntity.ItemDisplayEntity ? Draft.Type.ITEM : Draft.Type.TEXT;
+        Draft.Type type = target instanceof BlockDisplayEntity ? Draft.Type.BLOCK
+                : target instanceof ItemDisplayEntity ? Draft.Type.ITEM : Draft.Type.TEXT;
         client.setScreen(new DisplayEditScreen(new Draft(target.getUuidAsString(), nbt, type)));
     }
 
@@ -307,7 +313,7 @@ public class DisplayEditClient implements ClientModInitializer {
 
         DisplayEntity best = null;
         double bestScore = Double.MAX_VALUE;
-        for (DisplayEntity e : client.world.getEntitiesByClass(DisplayEntity.class, area, x -> x instanceof DisplayEntity.TextDisplayEntity || x instanceof DisplayEntity.BlockDisplayEntity || x instanceof DisplayEntity.ItemDisplayEntity)) {
+        for (DisplayEntity e : client.world.getEntitiesByClass(DisplayEntity.class, area, x -> x instanceof TextDisplayEntity || x instanceof BlockDisplayEntity || x instanceof ItemDisplayEntity)) {
             Visual v = visualOf(client, e, now);
             if (v == null) continue;
 
@@ -349,7 +355,7 @@ public class DisplayEditClient implements ClientModInitializer {
         double tz = component(translation, 2, 0f);
 
         Visual visual;
-        if (e instanceof DisplayEntity.BlockDisplayEntity) {
+        if (e instanceof BlockDisplayEntity) {
             double sx = component(scale, 0, 1f);
             double sy = component(scale, 1, 1f);
             double sz = component(scale, 2, 1f);
@@ -357,7 +363,7 @@ public class DisplayEditClient implements ClientModInitializer {
             Vec3d center = e.getPos().add(tx + sx / 2, ty + sy / 2, tz + sz / 2);
             visual = new Visual(center,
                     Math.max(Math.abs(sx), Math.abs(sz)) / 2 + MARGIN, Math.abs(sy) / 2 + MARGIN, now);
-        } else if (e instanceof DisplayEntity.ItemDisplayEntity) {
+        } else if (e instanceof ItemDisplayEntity) {
             // item_display: 아이템 모델이 엔티티 위치를 중심으로 scale 만큼 퍼진다
             double sx = Math.abs(component(scale, 0, 1f));
             double sy = Math.abs(component(scale, 1, 1f));
