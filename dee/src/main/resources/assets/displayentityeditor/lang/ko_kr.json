@@ -32,7 +32,8 @@
   "dee.billboard.vertical": "수직",
   "dee.billboard.horizontal": "수평",
   "dee.billboard.center": "중앙",
-  "dee.tooltip.styled_text": "서식(색/번역 키 등)이 있는 텍스트입니다. 이 칸을 수정하면 서식이 사라집니다.\n서식을 유지하려면 [고급]을 켜서 수정하세요.",
+  "dee.tooltip.styled_text": "이 텍스트는 일반 모드로 읽을 수 없습니다. 이 칸을 수정하면 서식이 사라지고 글자만 남습니다.\n유지하려면 [고급]을 켜서 수정하세요.",
+  "dee.tooltip.locked_text": "⚿ 로 표시된 곳은 번역 키·키 바인드·스코어 등 일반 모드에서 고칠 수 없는 부분입니다.\n지우거나 잘라내 붙여넣어 옮길 수는 있고, 내용은 [고급]에서 수정하세요.",
   "dee.tooltip.advanced": "켜면 text NBT 를 SNBT 로 직접 수정합니다.\n예) {translate:\"my.key\"}",
   "dee.tooltip.delete": "이 디스플레이 엔티티를 삭제합니다. (한 번 더 클릭하면 확인)",
   "dee.advanced.title": "고급 NBT",
@@ -144,5 +145,14 @@
   "dee.group.default_name": "그룹 %s",
   "dee.chat.gizmo_enter": "에디터 모드 시작 (ESC로 종료)",
   "dee.chat.gizmo_exit": "에디터 모드 종료",
-  "dee.chat.gizmo_lost": "편집하던 엔티티를 찾지 못해 에디터 모드를 종료했습니다"
+  "dee.chat.gizmo_lost": "편집하던 엔티티를 찾지 못해 에디터 모드를 종료했습니다",
+  "dee.rich.custom_color": "색상 선택기",
+  "dee.rich.bold": "굵게",
+  "dee.rich.italic": "기울임",
+  "dee.rich.underline": "밑줄",
+  "dee.rich.strikethrough": "취소선",
+  "dee.rich.obfuscated": "난독화",
+  "dee.rich.clear": "서식 지우기",
+  "dee.rich.apply": "적용",
+  "dee.rich.cancel": "취소"
 }

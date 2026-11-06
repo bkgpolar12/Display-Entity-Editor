@@ -117,6 +117,9 @@ public class DisplayEditScreen extends Screen {
     private int pickW;
 
     private EditBox textField;
+    /** 일반 텍스트 모드의 서식 모델과, 글자를 블록 지정하면 뜨는 툴바. 고급 모드/다른 종류에서는 null. */
+    private RichText rich;
+    private RichTextToolbar toolbar;
     private EditBox blockField;
     private EditBox propsField;
     private EditBox itemField;
@@ -166,6 +169,8 @@ public class DisplayEditScreen extends Screen {
         labels.clear();
         entries.clear();
         scrollWidgets.clear();
+        rich = null;
+        toolbar = null;
 
         int widestLabel = switch (draft.type()) {
             case BLOCK -> widest("dee.label.block", "dee.label.block_properties", "dee.label.glow");
@@ -554,15 +559,31 @@ public class DisplayEditScreen extends Screen {
             textField.setResponder(this::onAdvancedTextEdit);
         } else {
             textField.setMaxLength(1024);
-            textField.setValue(currentText().getString().replace("\n", "\\n"));
-            if (draft.get("text") != null && !(draft.get("text") instanceof StringTag)) {
+            rich = RichText.fromTag(draft.get("text")).orElse(null);
+            if (rich != null) {
+                // 서식 모델이 글자마다 색/볼드 등을 들고 있다. 글자를 고치면 모델이 맞춰지고, 블록 지정하면 툴바가 뜬다.
+                textField.setValue(rich.text());
+                RichTextToolbar.attachFormatter(textField, rich);
+                textField.setResponder(s -> {
+                    textField.setTextColor(COLOR_OK);
+                    rich.onTextChanged(s);
+                    draft.set("text", rich.toTag());
+                    refreshLockTooltip();
+                });
+                refreshLockTooltip();
+                toolbar = new RichTextToolbar(font, textField, rich, width, height,
+                        () -> draft.set("text", rich.toTag()), box -> setFocused(box));
+                addWidget(toolbar.hexBox()); // 색상 선택기의 16진수 칸 (그리기는 툴바가 한다)
+            } else {
+                // text 를 컴포넌트로 읽을 수 없는 경우: 예전처럼 글자만 보여 주고, 고치면 서식이 사라진다.
+                textField.setValue(currentText().getString().replace("\n", "\\n"));
                 textField.setTextColor(COLOR_STYLED);
                 textField.setTooltip(Tooltip.create(Component.translatable("dee.tooltip.styled_text")));
+                textField.setResponder(s -> {
+                    textField.setTextColor(COLOR_OK);
+                    setPlainText(s);
+                });
             }
-            textField.setResponder(s -> {
-                textField.setTextColor(COLOR_OK);
-                setPlainText(s);
-            });
         }
         setInitialFocus(textField);
 
@@ -575,6 +596,22 @@ public class DisplayEditScreen extends Screen {
                 .build(), cy);
         cy += PITCH;
         return cy;
+    }
+
+    /** 잠긴 부분(translate/keybind/score 등)이 있으면 텍스트 칸 툴팁에 그 목록을 보여 준다. */
+    private void refreshLockTooltip() {
+        if (textField == null || rich == null) return;
+        List<String> locks = rich.lockSummaries();
+        if (locks.isEmpty()) {
+            textField.setTooltip(null);
+            return;
+        }
+        MutableComponent tip = Component.translatable("dee.tooltip.locked_text");
+        for (int i = 0; i < Math.min(8, locks.size()); i++) {
+            tip.append(Component.literal("\n" + locks.get(i)).withStyle(ChatFormatting.GRAY));
+        }
+        if (locks.size() > 8) tip.append(Component.literal("\n…").withStyle(ChatFormatting.GRAY));
+        textField.setTooltip(Tooltip.create(tip));
     }
 
     /**
@@ -1162,6 +1199,8 @@ public class DisplayEditScreen extends Screen {
     // 1.21.9 부터 마우스 입력은 MouseButtonEvent 로 전달된다. (26.3 은 SDL 이라 버튼 번호가 달라서 상수를 쓴다)
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        // 서식 툴바가 먼저 처리한다. (처리하면 텍스트 칸의 포커스와 블록 지정이 풀리지 않는다)
+        if (toolbar != null && toolbar.mouseClicked(event, doubleClick)) return true;
         double mouseX = event.x();
         double mouseY = event.y();
         boolean left = event.button() == InputConstants.MOUSE_BUTTON_LEFT;
@@ -1188,6 +1227,7 @@ public class DisplayEditScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (toolbar != null && toolbar.mouseDragged(event)) return true;
         if (draggingBar) {
             dragBarTo(event.y());
             return true;
@@ -1197,6 +1237,7 @@ public class DisplayEditScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
+        if (toolbar != null && toolbar.mouseReleased(event)) return true;
         draggingBar = false;
         return super.mouseReleased(event);
     }
@@ -1392,6 +1433,7 @@ public class DisplayEditScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         // 커서 이동/입력에 맞춰 속성 툴팁 내용을 갱신 (바뀐 경우에만 다시 만든다)
         refreshPropsTooltip();
+        if (toolbar != null) toolbar.update(); // 텍스트 칸의 블록 지정 범위 읽기
         // 오른쪽 파트 목록의 바탕 (버튼보다 먼저 그린다)
         if (parts.size() >= 2) {
             int px = panelX();
@@ -1435,6 +1477,13 @@ public class DisplayEditScreen extends Screen {
         context.disableScissor();
 
         drawScrollbar(context);
+        // 글자를 블록 지정했을 때 뜨는 서식 툴바. 다른 모든 것 위에 그린다.
+        if (toolbar != null) toolbar.render(context, mouseX, mouseY, delta);
+        // 진단용 (툴바가 안 뜨는 원인을 찾으면 지우세요)
+//        if (draft.type() == Draft.Type.TEXT && !draft.isAdvancedText()) {
+//            context.text(font, toolbar != null ? toolbar.debugLine() : "toolbar: null (rich == null, 서식 모델로 못 읽음)",
+//                    2, height - 10, 0xFFFFFF55, true);
+//        }
     }
 
     private void drawScrollbar(GuiGraphicsExtractor context) {

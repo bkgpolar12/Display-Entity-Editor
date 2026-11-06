@@ -32,7 +32,8 @@
   "dee.billboard.vertical": "Vertical",
   "dee.billboard.horizontal": "Horizontal",
   "dee.billboard.center": "Center",
-  "dee.tooltip.styled_text": "This text has formatting (color, translate key, etc.). Editing this field removes the formatting.\nTo keep it, turn on [Adv.] and edit it there.",
+  "dee.tooltip.styled_text": "This text cannot be read in normal mode. Editing this field removes the formatting and keeps only the plain text.\nTo keep it, turn on [Adv.] and edit it there.",
+  "dee.tooltip.locked_text": "Parts shown as ⚿ (translate key, keybind, score, etc.) cannot be edited in normal mode.\nYou can delete them or cut and paste to move them; edit their content with [Adv.].",
   "dee.tooltip.advanced": "When on, edit the text NBT directly as SNBT.\nExample: {translate:\"my.key\"}",
   "dee.tooltip.delete": "Deletes this display entity. (Click twice to confirm)",
   "dee.advanced.title": "Advanced NBT",
@@ -144,5 +145,14 @@
   "dee.group.default_name": "Group %s",
   "dee.chat.gizmo_enter": "Editor mode on (ESC to exit)",
   "dee.chat.gizmo_exit": "Editor mode off",
-  "dee.chat.gizmo_lost": "Could not find the entity being edited; editor mode ended"
+  "dee.chat.gizmo_lost": "Could not find the entity being edited; editor mode ended",
+  "dee.rich.custom_color": "Color picker",
+  "dee.rich.bold": "Bold",
+  "dee.rich.italic": "Italic",
+  "dee.rich.underline": "Underline",
+  "dee.rich.strikethrough": "Strikethrough",
+  "dee.rich.obfuscated": "Obfuscated",
+  "dee.rich.clear": "Clear formatting",
+  "dee.rich.apply": "Apply",
+  "dee.rich.cancel": "Cancel"
 }

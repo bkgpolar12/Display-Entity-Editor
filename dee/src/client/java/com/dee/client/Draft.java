@@ -148,9 +148,11 @@ public final class Draft {
         this.creating = creating;
         this.original = nbt.copy();
         this.working = nbt.copy();
-        // 서식이 있는 텍스트({translate:..} 등)면 처음부터 고급 모드로 연다
+        // 일반 모드가 표현할 수 없는 텍스트({translate:..} 등)면 처음부터 고급 모드로 연다
         Tag text = nbt.get("text");
-        this.advancedText = type == Type.TEXT && text != null && !(text instanceof StringTag);
+        // (색/볼드/기울임/밑줄/취소선/난독화만 있는 텍스트는 일반 모드의 서식 툴바로 편집할 수 있다)
+        this.advancedText = type == Type.TEXT && text != null && !(text instanceof StringTag)
+                && RichText.fromTag(text).isEmpty();
 
         // 엔티티의 Tags (/tag 로 다루는 스코어보드 태그)
         ListTag tags = nbt.getListOrEmpty("Tags");
